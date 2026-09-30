@@ -31,7 +31,7 @@
 
 #include "template_viewer.hpp"
 
-#include <algorithm>   // stable_sort, for grouping the release columns by bin
+#include <algorithm>
 
 // ========================================================================
 // Shared display preparation
@@ -162,15 +162,6 @@ static void adoptPulsePair(tbank::template_of_all_signals& slot,
 }
 
 
-QString TemplateViewerWindow::beatsBinPath() const {
-    // SAME DIRECTORY AND STEM morphology_csv::set was handed in
-    // analysis_job::prepare, which is what wrote the file. Derived on each call
-    // rather than cached at load, so it cannot survive a subject change and
-    // point at the previous record's beats.
-    if (m_templateDir.isEmpty() || m_subjectId.isEmpty()) return {};
-    return m_templateDir + "/" + m_subjectId + "_beats.bin";
-}
-
 // Release of a dragged bar. TWO KINDS OF BAR MATTER HERE: the four ECG landmark
 // bars, whose anchor's per-slot average is re-stacked on the operator's column,
 // and the pulse foot, whose cohort is re-levelled on it. Everything else is
@@ -178,7 +169,7 @@ QString TemplateViewerWindow::beatsBinPath() const {
 // for those rather than doing work per gesture.
 //
 // ON RELEASE, NOT ON MOVE, AND THAT IS THE WHOLE REASON THIS SLOT EXISTS. A
-// re-stack reads the bin's beat matrix off disk and re-medians a few hundred
+// re-stack gathers the slot's member beats and re-medians a few hundred
 // rows; hanging that off markerMoved would run it once per mouse-move event
 // for the entire drag, so the bar would lurch and every intermediate column
 // would produce a template nobody asked for. The gesture is "the landmark is
@@ -229,22 +220,6 @@ void TemplateViewerWindow::onMarkerReleasedOnTemplate(int binIdx, int leadIdx,
     }
     m_dragPropCols.clear();
 
-    // ---- BY BIN, SO THE ONE-DEEP MATRIX CACHE HITS ---------------------
-    //
-    // m_dragPropCols is in PANEL order, which walks the page left to right and
-    // therefore alternates bins; beatsForBin caches exactly one bin, so that
-    // order missed on nearly every column. Sorting by bin makes every slot of
-    // a bin consecutive, and the second and later slots of each bin cost
-    // nothing. It matters most on the disk fallback, where a miss re-walks the
-    // whole _beats.bin.
-    //
-    // STABLE, so slots within a bin keep their left-to-right order and the
-    // status line still reports them in the order the operator sees.
-    std::stable_sort(alsoPulse.begin(), alsoPulse.end(),
-        [](const std::pair<int, int>& a, const std::pair<int, int>& b) {
-            return a.first < b.first;
-        });
-
     const bool manyPulse = !alsoPulse.empty();
 
     // relevelAt, not relevelAtOwnCrossing: the operator's column IS the answer
@@ -270,80 +245,31 @@ void TemplateViewerWindow::onMarkerReleasedOnTemplate(int binIdx, int leadIdx,
 
 }
 
-// ---- ONE BIN'S BEAT MATRIX, CACHED ONE DEEP --------------------------------
+// ---- ONE SLOT'S BEATS -------------------------------------------------------
 //
-// The original note here said: read per gesture, and if it ever shows up as a
-// delay, cache the LAST bin read -- not all of them. It has: a percent change
-// re-stacks every column on the page, and a page is up to eight columns of
-// which several are usually sibling slots of the SAME bin, so an uncached read
-// re-walks the file once per column to return the same matrix.
+// PER SLOT, NOT PER BIN. The re-stack of a slot reads that slot's cohort and
+// nothing else, so that is all this gathers: one borrowed pointer per member,
+// uncached, because gathering is cheaper than a cache lookup was worth.
 //
-// ONE ENTRY, and it is a cache of the file rather than of the alignment -- the
-// rows are what the build sliced and no re-stack ever writes to them, so it
-// cannot go stale within a subject. It is keyed only by bin, so it MUST be
-// dropped when the subject changes (initAfterBinsLoaded does that); bin 3 of
-// the next record would otherwise be served bin 3 of this one.
-const ppg_realign::BinBeats& TemplateViewerWindow::beatsForBin(int binIdx,
-    const char* channel)
+// MEMORY ONLY. per_channel_beats["PPG"][bin] IS this bin's kept pulses,
+// [beat][sample], in slice order -- the LOCAL ROW SPACE members_clean indexes,
+// so there is no join to do. It belongs to the BeatsFile this window was
+// handed (setBeats), which outlives the SlotBeats.
+//
+// NO FILE FALLBACK. There used to be one onto <stem>_beats.bin, but the only
+// caller always hands the window its BeatsFile, and the file is written late
+// by a deferred task on the finalize() thread -- so while this window is open
+// the copy on disk can be a PREVIOUS run's, with a different bin and member
+// layout, and reading it would re-stack a slot from the wrong beats without a
+// word. A missing channel or bin is an empty result, which the caller refuses.
+ppg_realign::SlotBeats TemplateViewerWindow::beatsForSlot(int binIdx,
+    const std::vector<uint32_t>& cohort, const char* channel) const
 {
-    static const ppg_realign::BinBeats kNone;
-    if (binIdx < 0 || !channel) return kNone;
-    if (m_beatsCacheBin == binIdx && m_beatsCacheChan == channel)
-        return m_beatsCache;
-
-    // ---- MEMORY FIRST, AND NORMALLY THERE IS NO SECOND ------------------
-    //
-    // per_channel_beats["PPG"][bin] IS this bin's kept pulses, [beat][sample],
-    // in slice order -- which is the LOCAL ROW SPACE members_clean indexes, so
-    // there is no join to do. loadBin has to reconstruct that space by
-    // counting became_beat columns in file order; here it is simply the vector.
-    //
-    // This is also why the disk path was the wrong design and not just badly
-    // ordered: the file is written by a deferred task on the thread running
-    // finalize(), started at the same instant this window opens, so it does
-    // not exist when the operator first drags a bar. See setBeats.
-    if (m_beatsInMemory) {
-        const auto it = m_beatsInMemory->per_channel_beats.find(channel);
-        if (it != m_beatsInMemory->per_channel_beats.end()
-            && binIdx < (int)it->second.size()) {
-            const std::vector<std::vector<double>>& rows = it->second[binIdx];
-            ppg_realign::BinBeats out;
-            // BORROWED, NOT COPIED. `out.rows = rows` here was a deep copy of
-            // the whole bin -- megabytes and hundreds of allocations per
-            // gesture, and per COLUMN under Move-Subsequent, because the cache
-            // below is one deep and keyed by bin. per_channel_beats belongs to
-            // the BeatsFile this window was handed and outlives the cache, so
-            // pointing at it is safe; see BinBeats.
-            out.external = &rows;
-            for (const auto& row : rows)
-                out.width = std::max(out.width, (int)row.size());
-            m_beatsCache = std::move(out);
-            m_beatsCacheBin = binIdx;
-            m_beatsCacheChan = channel;
-            return m_beatsCache;
-        }
-    }
-
-    // FALLBACK: the file. Reachable from a re-run where the archive from a
-    // previous pass is on disk. It also served the path overload of
-    // loadSubject, which had no BeatsFile to be handed; that overload went with
-    // <stem>_bins.bin, and this fallback did not, because a second pass over a
-    // finished record still finds <stem>_beats.bin where the first left it.
-    const QString path = beatsBinPath();
-    if (path.isEmpty()) return kNone;
-
-    m_beatsCache = ppg_realign::loadBin(path.toStdString(),
-        static_cast<uint32_t>(binIdx), channel);
-    m_beatsCacheBin = binIdx;
-    m_beatsCacheChan = channel;
-    return m_beatsCache;
-}
-
-void TemplateViewerWindow::clearBeatsCache()
-{
-    m_beatsCacheBin = -1;
-    m_beatsCacheChan.clear();
-    m_beatsCache = ppg_realign::BinBeats{};
+    if (binIdx < 0 || !channel || cohort.empty() || !m_beatsInMemory) return {};
+    const auto it = m_beatsInMemory->per_channel_beats.find(channel);
+    if (it == m_beatsInMemory->per_channel_beats.end()
+        || binIdx >= (int)it->second.size()) return {};
+    return ppg_realign::slotFromRows(it->second[binIdx], cohort);
 }
 
 // ---- THE WAVEFORM THE BUILD PRODUCED, KEPT ---------------------------------
@@ -391,11 +317,27 @@ tbank::PulseAnchor TemplateViewerWindow::pulseVariantForMarker(int marker)
 // A variant that has not been built contributes nothing rather than -1, so a
 // half-built slot keeps whatever it already had on screen instead of losing
 // its bars.
-void TemplateViewerWindow::composePulseMarks(tbank::template_of_all_signals& slot, double ppgRateHz)
+void TemplateViewerWindow::composePulseMarks(tbank::template_of_all_signals& slot,
+    double ppgRateHz)
 {
-    const tbank::PulseVariant& F = slot.pulseVariant(tbank::PulseAnchor::Foot);
-    const tbank::PulseVariant& P = slot.pulseVariant(tbank::PulseAnchor::Peak);
+    const tbank::PulseVariant& F =
+        slot.pulseVariant(tbank::PulseAnchor::Foot);
+    const tbank::PulseVariant& P =
+        slot.pulseVariant(tbank::PulseAnchor::Peak);
 
+    // ---- A -1 NEVER OVERWRITES A POSITION -------------------------------
+    //
+    // These copies were unconditional inside the ok() blocks, and that is the
+    // larger half of the vanishing-bar problem: a variant that built
+    // SUCCESSFULLY can still have a landmark its own detector missed, and
+    // copying that -1 in destroyed the value seedOneBin had already measured
+    // on the slot waveform. So a column whose variant was fine lost its end
+    // bar anyway. The archive shows the shape of it -- Peak carrying end on
+    // 102 slots but end_auto on 54.
+    //
+    // A MISSING SOURCE IS NOT A MEASUREMENT. The variant not finding a
+    // landmark says nothing about whether the landmark is there, so it must
+    // not be allowed to unsay what another source found.
     auto take = [](double& dst, double src) { if (src >= 0.0) dst = src; };
 
     if (F.ok()) {
@@ -415,7 +357,36 @@ void TemplateViewerWindow::composePulseMarks(tbank::template_of_all_signals& slo
         // unconditionally -- there is no "missing" value to protect.
         slot.pulse_marks.notch_found = P.marks.notch_found;
     }
-    //ensure that there are always dicrotic notch and peak and foot set
+
+    // ---- ONSET, PEAK, DICROTIC AND END ALWAYS EXIST ---------------------
+    //
+    // Not "usually" and not "when the detector agrees". Every source can fail:
+    // a REFUSED re-level leaves its variant built-and-empty so ok() is false
+    // and its block is skipped entirely; a variant that built can hand back
+    // -1; and seed_pulse_bank_template can miss on a real trace. None of those
+    // is a statement that the pulse lacks the landmark.
+    //
+    // THE FOUR DEFAULTS ARE GEOMETRIC, so none of them can be absent. The
+    // slice is one cycle, foot to foot, on a shared axis:
+    //
+    //   onset    column 0            -- the slice BEGINS at the foot
+    //   end      last column         -- and ends where the next cycle starts
+    //   peak     argmax in (onset, end)
+    //                                -- the systolic apex is the largest value
+    //                                   in the cycle, always computable
+    //   dicrotic peak + 0.12 * rate  -- the same seed detect_ppg_fiducials
+    //                                   starts its own notch search from
+    //
+    // ORDER MATTERS: end before peak (peak searches up to end), peak before
+    // dicrotic (dicrotic is measured from peak). Each step fills only what is
+    // still missing, so a real detection is never displaced.
+    //
+    // NO FLAG DISTINGUISHES THESE FROM DETECTIONS. A defaulted landmark and a
+    // measured one are the same number to every consumer -- the CSV, the .bin,
+    // and anything bracketing on them. That is deliberate: the requirement is
+    // that the bars exist.
+    //
+    // AFTER BOTH BLOCKS, not inside either: the refusal case enters neither.
     if (!slot.tmpl.empty()) {
         const int n = static_cast<int>(slot.tmpl.size());
         if (slot.pulse_marks.onset < 0.0) slot.pulse_marks.onset = 0.0;
@@ -492,12 +463,16 @@ bool TemplateViewerWindow::buildPulseVariant(int binIdx, int templateIdx,
         slot.pulse_marks.foot_pct = usePct;
     }
 
-    if (beatsBinPath().isEmpty()) return false;
-    const ppg_realign::BinBeats& beats = beatsForBin(binIdx);
-    if (beats.empty()) return false;
+    const ppg_realign::SlotBeats beats = beatsForSlot(binIdx, cohort);
+    if (beats.empty()) {
+        if (auto* sb = announce ? statusBar() : nullptr)
+            sb->showMessage(tr("No member beats in memory for this template; "
+                "nothing to align."), 5000);
+        return false;
+    }
 
     const ppg_realign::RelevelResult res = ppg_realign::relevelAtOwnCrossing(
-        beats, cohort, hint,
+        beats, hint,
         ppg_realign::searchHalfWinFor(m_ppgRateHz),
         ppg_realign::levelHalfWinFor(m_ppgRateHz), usePct);
     if (!res.ok) {
@@ -519,7 +494,7 @@ bool TemplateViewerWindow::buildPulseVariant(int binIdx, int templateIdx,
     // same instant in each -- which is the property that lets a foot read off
     // Foot sit on the same axis as a notch read off Peak.
     out.tmpl = res.tmpl;
-    out.tmpl_iqr = res.iqr;
+    out.tmpl_iqr = res.std;
     const std::size_t keep = slot.tmpl.size();
     if (keep > 0 && out.tmpl.size() > keep) {
         out.tmpl.resize(keep);

@@ -181,7 +181,6 @@ private:
     std::vector<double> maybeNotchTrace(const std::vector<double>& sig, double fs, double footIdx) const;
     bool pulseTraceForSlot(tbank::template_of_all_signals& slot, std::vector<double>& outTrace, std::vector<double>& out_std, double& outFootIdx);
     void showPage();
-    QString beatsBinPath() const;
     std::set<int> m_ppgRealigned;
     std::map<int, std::pair<std::vector<double>, std::vector<double>>> m_ppgBuilt;
     tbank::PulseAnchor m_ppgViewVariant = tbank::PulseAnchor::Foot;
@@ -258,15 +257,10 @@ private:
     bool relevelPulseAtFoot(int binIdx, int templateIdx, double footCol, bool announce = true);
 
     const template_structs::BeatsFile* m_beatsInMemory = nullptr;
-    // KEYED ON (bin, channel), not bin alone: the ECG re-stack reads "CH1".."CH3"
-    // out of the same BeatsFile the pulse path reads "PPG" from, and a cache
-    // ignoring the channel would serve lead 0's rows for lead 2.
-    int m_beatsCacheBin = -1;
-    std::string m_beatsCacheChan;
-    ppg_realign::BinBeats m_beatsCache;
-    const ppg_realign::BinBeats& beatsForBin(int binIdx,
-        const char* channel = "PPG");
-    void clearBeatsCache();
+    // One slot's cohort rows, borrowed from m_beatsInMemory. Per slot,
+    // uncached, memory only; see template_viewer_realign.cpp.
+    ppg_realign::SlotBeats beatsForSlot(int binIdx,
+        const std::vector<uint32_t>& cohort, const char* channel = "PPG") const;
 
     void clearPlots();
     void captureCurrentPage();

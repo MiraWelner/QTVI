@@ -983,9 +983,9 @@ void TemplateViewerWindow::showPage() {
     // put back and the call was skipped. It now decides an alignment per
     // column (TemplateViewerWindow::autoPctForSlot) and re-stacks like every
     // other position, so a page turn costs one beat-matrix median per visible
-    // pulse column -- the matrix itself is normally already in memory and
-    // cached one bin deep (beatsForBin), so this is arithmetic rather than
-    // file work, but it is not nothing.
+    // pulse column -- each slot's beats are borrowed from memory per slot
+    // (beatsForSlot), so this is arithmetic rather than file work, but it is
+    // not nothing.
     realignAllVisiblePulses();
 }
 

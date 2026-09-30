@@ -101,7 +101,6 @@ struct config_entry {
     std::string training_log;
     std::string vcg_output;
 
-
     // Different filetypes have different terms for the same type of signal,
     // If only one filetype has a given type of data (ie only bittium has accelration) then the label
     // name is set here. Otherwise, it is set in the apply_dataset_specific_channel_labels function in config_loader.cpp

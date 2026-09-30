@@ -1,45 +1,16 @@
 #pragma once
 /**
  * @file   ppg_realign.hpp
- * @brief  Re-stack one pulse template about an operator-corrected foot.
- *
- *         WHAT THIS IS FOR. The pulse template a column draws is a column-wise
- *         median over the beats the build assigned to that morphology, stacked
- *         on whatever fiducial alignment.hpp was told to use. When the foot
- *         detector is wrong it is usually wrong the SAME WAY on every beat in
- *         the bin -- it lands on the dicrotic notch, or on the reflected wave's
- *         upstroke -- and the averaged template then smears about the wrong
- *         landmark. One operator correction, dragged on the average, is enough
- *         to say where the foot really is; this re-detects each beat's own foot
- *         near that column and re-medians the stack about it.
- *
- *         WHAT IT DELIBERATELY DOES NOT DO. It does not re-run the pulse QC
- *         filter, and it does not touch membership: the survivor set is exactly
- *         the one the build chose. Re-filtering here would change which beats
- *         are in the group, which changes the morphology split, which is the
- *         pipeline's job and not a mouse-release's. So this is an honest
- *         re-average of a fixed cohort and nothing more -- and the template it
- *         produces is anchored one way while its cohort was selected under
- *         another, which the caller should say out loud rather than hide.
- *
- *         ONE NUMBER CANNOT BE AN ALIGNMENT. The dragged bar is a single column
- *         on the AVERAGE; a re-stack needs a foot per beat. Applying the
- *         operator's column as a rigid offset to every beat would translate the
- *         template and change nothing about its shape, which is not what the
- *         gesture means. So the column is used as a SEARCH HINT: each beat's
- *         own trough within +-search_halfwin of it. That is why the correction
- *         can be large (notch to foot, 200 ms) while the window stays small --
- *         the window only has to cover beat-to-beat scatter of the true foot,
- *         not the size of the correction.
+ * @brief  Re-stack one pulse template about an operator-corrected foot, or swap between peak align and foot align
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
+ * @date 2026-09-30
  */
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <fstream>
 #include <limits>
 #include <string>
 #include <vector>
@@ -50,128 +21,31 @@
 
 namespace ppg_realign {
 
-    // One bin's pulse beats, in the channel's LOCAL ROW SPACE -- the space
-    // tbank::BankTemplate::members is in (see the join note on loadBin).
-    // ---- ONE BIN'S BEAT MATRIX, OWNED OR BORROWED ----------------------
-    //
-    // `rows` WAS AN OWNING VECTOR AND THAT WAS THE RE-STACK'S COST. The
-    // viewer already holds every bin's pulses in memory
-    // (BeatsFile::per_channel_beats), so the memory path of beatsForBin was
-    // deep-copying a few hundred rows of a couple of thousand doubles --
-    // several megabytes and a few hundred heap allocations -- to answer one
-    // gesture. With Move-Subsequent that happened once per COLUMN, and the
-    // cache is one deep and keyed by bin, so columns in different bins missed
-    // it every time.
-    //
-    // `external` POINTS AT THE CALLER'S ROWS and takes precedence; `owned` is
-    // filled only by loadBin, the disk fallback, which has nowhere to borrow
-    // from. Reading goes through rows() so neither the algorithms below nor
-    // their callers care which case they got.
-    //
-    // NEVER POINT external AT owned. A BinBeats is returned by value and
-    // cached by move, so a self-pointer would dangle the moment it moved;
-    // external is only ever set to storage that outlives the cache (the
-    // BeatsFile the window was handed). Copying or moving a BinBeats keeps a
-    // borrowed pointer valid precisely because it aims somewhere else.
-    struct BinBeats {
+    struct SlotBeats {
+        //all the valid beats in the slot
         int width = 0;
-        std::vector<std::vector<double>> owned;                     // disk path
-        const std::vector<std::vector<double>>* external = nullptr; // memory path
+        int n_members = 0;   // cohort offered, including stale indices dropped
+        std::vector<const std::vector<double>*> rows;
 
-        const std::vector<std::vector<double>>& rows() const {
-            return external ? *external : owned;
-        }
-        bool empty() const { return rows().empty() || width <= 0; }
+        std::size_t size() const { return rows.size(); }
+        const std::vector<double>& row(std::size_t i) const { return *rows[i]; }
+        bool empty() const { return rows.empty() || width <= 0; }
     };
 
-    // ------------------------------------------------------------------
-    // Reading ONE bin's pulse block out of <stem>_beats.bin
-    // ------------------------------------------------------------------
-    //
-    // NOT morphology_csv::readBeatsBin, and this is the one place in the
-    // codebase that reads the format without it. readBeatsBin materialises
-    // EVERY block: nCols x width doubles per channel, four channels, and on a
-    // full-night record that is hundreds of megabytes to answer a question
-    // about one bin. This walks the same layout instead, seeking over the
-    // blocks and columns it does not want, and allocates only the bin asked
-    // for.
-    //
-    // The LAYOUT still has exactly one definition: morphology_csv::BeatRecord
-    // and morphology_csv::bin_version are used directly, so a change to either
-    // reaches this reader as a compile-time or version-check failure rather
-    // than as silent misparsing. The traversal is duplicated; the format is
-    // not.
-    //
-    // ---- THE JOIN, WHICH IS THE PART THAT IS EASY TO GET WRONG ----------
-    //
-    // _beats.bin has ONE COLUMN PER SLICE (an R-pair), present whether or not
-    // this channel produced a beat for it; became_beat says which. But
-    // BankTemplate::members holds LOCAL ROWS -- jbank::projectToChannel
-    // translates each group member from slice to row via
-    // ChannelBeats::local_of_slice before the archive ever sees it. The two
-    // spaces are NOT the same, despite what morphology_csv::BinBlock::members'
-    // own comment says.
-    //
-    // They are reconcilable because row order is slice order: the pulse slicer
-    // appends beats in increasing slice index and every prune downstream
-    // preserves that order, so local row k is the k-th became_beat column of
-    // that bin. Counting them in file order reproduces local_of_slice exactly,
-    // which is what the loop below does -- rows.size() is the next row index.
-    inline BinBeats loadBin(const std::string& beatsPath, uint32_t bin,
-        const char* channel = "PPG")
+    // binRows is per_channel_beats[channel][bin]: that bin's kept beats in
+    // slice order, which IS the local row space members index -- no join.
+    // Indices past the end are a stale member list and are dropped.
+    inline SlotBeats slotFromRows(const std::vector<std::vector<double>>& binRows,
+        const std::vector<uint32_t>& cohort)
     {
-        BinBeats out;
-        std::ifstream f(beatsPath, std::ios::binary);
-        if (!f) return out;
-
-        auto rd = [&f](void* dst, std::streamsize n) -> bool {
-            return static_cast<bool>(f.read(static_cast<char*>(dst), n));
-            };
-
-        uint32_t ver = 0, nBlocks = 0;
-        if (!rd(&ver, 4) || !rd(&nBlocks, 4)) return out;
-        if (ver > templates_io::bin_version) return out;   // newer than this build
-
-        const std::streamsize recSize =
-            static_cast<std::streamsize>(sizeof(templates_io::BeatRecord));
-
-        for (uint32_t bi = 0; bi < nBlocks; ++bi) {
-            uint32_t len = 0;
-            if (!rd(&len, 4) || len > 64) return out;
-            std::string name(len, '\0');
-            if (len && !rd(name.data(), len)) return out;
-            uint32_t width = 0;
-            uint64_t nCols = 0;
-            if (!rd(&width, 4) || !rd(&nCols, 8)) return out;
-
-            const std::streamsize sampleBytes =
-                static_cast<std::streamsize>(width) * 8;
-
-            if (name != channel) {
-                // Whole block skipped in one seek. A block is a fixed stride:
-                // every column is one record plus `width` doubles, with no
-                // per-column length prefix, which is what makes this possible.
-                f.seekg((recSize + sampleBytes) * static_cast<std::streamoff>(nCols),
-                    std::ios::cur);
-                if (!f) return out;
-                continue;
-            }
-
-            out.width = static_cast<int>(width);
-            for (uint64_t k = 0; k < nCols; ++k) {
-                templates_io::BeatRecord rec;
-                if (!rd(&rec, recSize)) { out.owned.clear(); return out; }
-                const bool want = (rec.bin == bin) && (rec.became_beat != 0);
-                if (!want || width == 0) {
-                    if (sampleBytes) f.seekg(sampleBytes, std::ios::cur);
-                    if (!f) { out.owned.clear(); return out; }
-                    continue;
-                }
-                std::vector<double> row(width);
-                if (!rd(row.data(), sampleBytes)) { out.owned.clear(); return out; }
-                out.owned.push_back(std::move(row));
-            }
-            return out;   // the block we came for; nothing after it matters
+        SlotBeats out;
+        out.n_members = static_cast<int>(cohort.size());
+        out.rows.reserve(cohort.size());
+        for (const uint32_t r : cohort) {
+            if (r >= binRows.size()) continue;          // stale member list
+            const std::vector<double>& row = binRows[r];
+            out.rows.push_back(&row);
+            out.width = std::max(out.width, static_cast<int>(row.size()));
         }
         return out;
     }
@@ -199,7 +73,7 @@ namespace ppg_realign {
         return std::max(3, n_used / 2);
     }
 
-    inline std::vector<double> raw_std_columns( const std::vector<std::vector<double>>& rows, int n_used)
+    inline std::vector<double> raw_std_columns(const std::vector<std::vector<double>>& rows, int n_used)
     {
         std::size_t w = 0;
         for (const auto& r : rows) w = std::max(w, r.size());
@@ -359,9 +233,10 @@ namespace ppg_realign {
         return FeatureMarks::first_crossing(v, foot, peak, pct / 100.0);
     }
 
-    // `rows` is the member list IN LOCAL ROW SPACE -- pass members_clean when
-    // it is non-empty, since that is the set the existing waveform was averaged
-    // over and the point here is to re-average THE SAME SET.
+    // `beats` is ONE SLOT'S cohort (slotFromRows) -- gathered from
+    // members_clean when it is non-empty, since that is the set the existing
+    // waveform was averaged over and the point here is to re-average THE SAME
+    // SET.
     //
     // search_halfwin is in samples. The caller sets it from the pulse rate; see
     // kDefaultSearchSeconds.
@@ -386,17 +261,16 @@ namespace ppg_realign {
     // is only the column the stack is anchored AT. Every beat contributes its
     // own crossing, so the shape sharpens; a rigid offset would only translate
     // the template.
-    inline Result realignAt(const BinBeats& beats,
-        const std::vector<uint32_t>& rows,
+    inline Result realignAt(const SlotBeats& beats,
         double operatorFootCol,
         int search_halfwin,
         double pct,
         double anchorCol)
     {
         Result out;
-        out.n_members = static_cast<int>(rows.size());
+        out.n_members = beats.n_members;
         out.pct = (pct > 0.0) ? std::min(pct, 100.0) : 0.0;
-        if (beats.empty()) { out.why = "no beat matrix for this bin"; return out; }
+        if (beats.empty()) { out.why = "no member beats for this template"; return out; }
         const int w = beats.width;
         const int foot_target = static_cast<int>(std::lround(operatorFootCol));
         if (foot_target < 0 || foot_target >= w) { out.why = "foot bar outside the beat window"; return out; }
@@ -418,14 +292,13 @@ namespace ppg_realign {
         out.foot_col = foot_target;
 
         std::vector<std::vector<double>> shifted;
-        shifted.reserve(rows.size());
+        shifted.reserve(beats.size());
         std::vector<int> shifts;
-        shifts.reserve(rows.size());
+        shifts.reserve(beats.size());
         const double kNaN = std::numeric_limits<double>::quiet_NaN();
 
-        for (const uint32_t r : rows) {
-            if (r >= beats.rows().size()) continue;     // stale member list
-            const std::vector<double>& src = beats.rows()[r];
+        for (std::size_t i = 0; i < beats.size(); ++i) {
+            const std::vector<double>& src = beats.row(i);
             // Each beat's OWN trough, bounded to the hint window. trough_in
             // clamps its own bounds and returns -1 when the window is all NaN,
             // which is a beat whose samples do not reach here -- skipped, not
@@ -518,61 +391,20 @@ namespace ppg_realign {
     // The foot alignment, which is realignAt with no percent and no separate
     // anchor. Kept as its own name because it is what a foot-bar drag means
     // and because every existing caller passes exactly these four arguments.
-    inline Result realign(const BinBeats& beats,
-        const std::vector<uint32_t>& rows,
+    inline Result realign(const SlotBeats& beats,
         double operatorFootCol,
         int search_halfwin)
     {
-        return realignAt(beats, rows, operatorFootCol, search_halfwin,
+        return realignAt(beats, operatorFootCol, search_halfwin,
             /*pct=*/0.0, /*anchorCol=*/operatorFootCol);
     }
 
-    // ======================================================================
-    // THE VERTICAL SIBLING: RE-LEVEL A COHORT ON THE OPERATOR'S FOOT
-    // ======================================================================
-    //
-    // A DIFFERENT AXIS FROM realignAt, AND THAT IS THE WHOLE DISTINCTION. The
-    // "Align PPG Horizontal" group re-TIMES the stack -- it decides which
-    // instant every beat is shifted onto. The foot bar does not: the foot is
-    // the pulse's vertical reference, in the build (pass 2 of
-    // extract_ppg_beats_and_align DC-matches each beat's baseline to the
-    // reference beat's) and in the viewer (normalize_ppg_or_similar computes
-    // 100*(sample - footY)/footY, so the foot column is subtracted AND divided
-    // by, and the band is scaled about the same column).
-    //
-    // So "re-do the foot alignment" means: level every member row so they
-    // agree at the column the operator put the bar on, then re-median. No
-    // sample moves sideways.
-    //
-    // ONE SHARED COLUMN, NOT A SEARCH. The bar says "the foot is HERE", so
-    // that column is read on every row directly -- no per-row trough hunt,
-    // which would re-derive an answer the operator has just overridden. It is
-    // a slightly stronger claim than the detector makes (the detector returns
-    // a foot per beat), and it is a fair one here because the rows arrive
-    // already up50 time-aligned, so their feet very nearly coincide in column
-    // anyway.
-    //
-    // EACH ROW GETS ITS OWN OFFSET, which is what makes this more than a
-    // cosmetic shift of the average: the rows' relative vertical positions
-    // change, so the column median changes at every other column too. The
-    // waveform's SHAPE moves, not just its height.
-    //
-    // ---- AND IT LEVELS TO A VALUE, NOT TO ZERO --------------------------
-    //
-    // Subtracting each row's own level outright would leave tmpl[foot] == 0 --
-    // and that is precisely the divisor normalize_ppg_or_similar uses. A
-    // near-zero divisor is the failure maybeNotchTrace's comment describes: a
-    // tiny DC change becomes a huge relative one and the normalized trace
-    // collapses to the bottom of the axis, looking like the channel vanished.
-    //
-    // So the rows are brought to a COMMON BASELINE VALUE -- the median of
-    // their own levels, a real amplitude from this cohort -- exactly as the
-    // build matches each beat to its reference beat rather than to zero.
     struct RelevelResult {
-        bool ok = false;
+        // the output returned when a ppg is releveled vertically
+        bool ok = false; 
         std::string why;
         std::vector<double> tmpl;     // re-medianed waveform
-        std::vector<double> iqr;      // local-ratio IQR about foot_col
+        std::vector<double> std;      // local-ratio IQR about foot_col
         int    foot_col = -1;         // the operator's column
         double baseline = 0.0;        // the common level every row was brought to
         int    n_members = 0;         // cohort offered
@@ -586,14 +418,13 @@ namespace ppg_realign {
     // foot. One noisy sample would otherwise set that row's entire offset, and
     // the build takes a windowed mean for the same reason ("avoids
     // order-statistic bias").
-    inline RelevelResult relevelAt(const BinBeats& beats,
-        const std::vector<uint32_t>& rows,
+    inline RelevelResult relevelAt(const SlotBeats& beats,
         double footCol,
         int mean_halfwin)
     {
         RelevelResult out;
-        out.n_members = static_cast<int>(rows.size());
-        if (beats.empty()) { out.why = "no beat matrix for this bin"; return out; }
+        out.n_members = beats.n_members;
+        if (beats.empty()) { out.why = "no member beats for this template"; return out; }
         const int w = beats.width;
         const int target = static_cast<int>(std::lround(footCol));
         if (target < 0 || target >= w) {
@@ -606,11 +437,10 @@ namespace ppg_realign {
         // ---- pass one: each row's own level at that column ---------------
         std::vector<const std::vector<double>*> src;
         std::vector<double> level;
-        src.reserve(rows.size());
-        level.reserve(rows.size());
-        for (const uint32_t r : rows) {
-            if (r >= beats.rows().size()) continue;     // stale member list
-            const std::vector<double>& row = beats.rows()[r];
+        src.reserve(beats.size());
+        level.reserve(beats.size());
+        for (std::size_t i = 0; i < beats.size(); ++i) {
+            const std::vector<double>& row = beats.row(i);
             const int lo = std::max(0, target - mean_halfwin);
             const int hi = std::min<int>(static_cast<int>(row.size()) - 1,
                 target + mean_halfwin);
@@ -702,7 +532,7 @@ namespace ppg_realign {
         //
         // RAW AMPLITUDE, not a perfusion ratio: the display divides this field
         // by the foot amplitude itself. See rawIqrColumns.
-        out.iqr = raw_std_columns(levelled, out.n_used);
+        out.std = raw_std_columns(levelled, out.n_used);
 
         out.ok = true;
         return out;
@@ -740,16 +570,15 @@ namespace ppg_realign {
     // as well as its foot, so it is MORE noise-sensitive than the foot, not
     // less. The control is still a real choice; it needs its own justification,
     // and that justification has not been written yet.
-    inline RelevelResult relevelAtOwnCrossing(const BinBeats& beats,
-        const std::vector<uint32_t>& rows,
+    inline RelevelResult relevelAtOwnCrossing(const SlotBeats& beats,
         double footCol,
         int search_halfwin,
         int mean_halfwin,
         double pct)
     {
         RelevelResult out;
-        out.n_members = static_cast<int>(rows.size());
-        if (beats.empty()) { out.why = "no beat matrix for this bin"; return out; }
+        out.n_members = beats.n_members;
+        if (beats.empty()) { out.why = "no member beats for this template"; return out; }
         const int w = beats.width;
         const int foot_target = static_cast<int>(std::lround(footCol));
         if (foot_target < 0 || foot_target >= w) {
@@ -764,11 +593,10 @@ namespace ppg_realign {
         // ---- pass one: each row's own crossing, and its level there ------
         std::vector<const std::vector<double>*> src;
         std::vector<double> level;
-        src.reserve(rows.size());
-        level.reserve(rows.size());
-        for (const uint32_t r : rows) {
-            if (r >= beats.rows().size()) continue;     // stale member list
-            const std::vector<double>& row = beats.rows()[r];
+        src.reserve(beats.size());
+        level.reserve(beats.size());
+        for (std::size_t i = 0; i < beats.size(); ++i) {
+            const std::vector<double>& row = beats.row(i);
 
             // Its own trough, bounded to the hint window -- the same call and
             // the same bounds realignAt uses, so the two cannot disagree about
@@ -887,7 +715,7 @@ namespace ppg_realign {
         //
         // RAW AMPLITUDE, not a perfusion ratio: the display divides this field
         // by the foot amplitude itself. See rawIqrColumns.
-        out.iqr = raw_std_columns(levelled, out.n_used);
+        out.std = raw_std_columns(levelled, out.n_used);
 
         out.ok = true;
         return out;

@@ -154,8 +154,9 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<analysis
                                            job->ecg2_inverted,
                                            job->ecg3_inverted } });
     // BEFORE loadSubject, like setLeadPolarity above. The pulse re-stack and
-    // re-level read this; without it they fall back to <stem>_beats.bin, which
-    // the worker thread below has not written yet when the window opens.
+    // re-level read their beats from this and nowhere else; without it they
+    // refuse. <stem>_beats.bin is no substitute: the worker thread below has
+    // not written this run's copy yet when the window opens.
     viewer.setBeats(&job->beats);
     QEventLoop loop;
     QObject::connect(&viewer, &TemplateViewerWindow::finished, &loop, &QEventLoop::quit, Qt::QueuedConnection);

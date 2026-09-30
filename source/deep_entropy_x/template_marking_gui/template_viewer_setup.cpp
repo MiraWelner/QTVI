@@ -281,12 +281,10 @@ void TemplateViewerWindow::loadSubject(const template_structs::TemplateFile& tf,
 void TemplateViewerWindow::initAfterBinsLoaded() {
     //various bookeeping after the bins are loaded
 
-    // PER-SUBJECT STATE, DROPPED HERE AND NOWHERE ELSE. All three are keyed on
-    // (bin, slot) or on bin alone, so carrying them across a subject change
-    // serves bin 3 of the next record with bin 3 of this one: a beat matrix
-    // from another patient, and a "built" waveform that would be restored over
-    // a template it never described.
-    clearBeatsCache();
+    // PER-SUBJECT STATE, DROPPED HERE AND NOWHERE ELSE. Both are keyed on
+    // (bin, slot), so carrying them across a subject change serves bin 3 of
+    // the next record with bin 3 of this one: a "built" waveform that would be
+    // restored over a template it never described.
     m_ppgBuilt.clear();
     m_ppgRealigned.clear();
 
@@ -590,6 +588,25 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                         d.ppg_bank.templates[t].setBadPulse(
                             s.ppg_bank.templates[t].badPulseMarked());
                 }
+                // NOTHING BIN-LEVEL TO MERGE. Three bin-level bars were merged
+                // here, and the block below already merges the real ones per
+                // slot -- so this was a second copy that only some consumers
+                // read. The .bin has never carried the bin-level three.
+
+                // ---- THE PER-SLOT PULSE BARS, AND EACH VARIANT'S ---------
+                //
+                // THE THREE FIELDS ABOVE ARE BIN-LEVEL and are not where the
+                // bars live. Every morphology column draws its own pulse
+                // (ppg_bank.templates[slot].tmpl) and carries its own
+                // BankPulseMarkerSet; the .bin has written them per slot since
+                // v1 and this merge never read them back, so a reload restored
+                // three bin-level numbers and left every column's actual bars
+                // at the auto seed. The operator's pulse marking did not
+                // survive a session.
+                //
+                // AND THE TWO VARIANTS (v3): the foot defines _F and the notch
+                // and end are measured on _P, so the composed set is not
+                // enough to reconstruct them -- see kMarkVersion.
                 {
                     const int nSaved = static_cast<int>(s.ppg_bank.templates.size());
                     const int nNow = static_cast<int>(d.ppg_bank.templates.size());
