@@ -380,39 +380,57 @@ namespace {
         return m;
     }
 
-    void repair_edf_startdate(const std::filesystem::path& path) {
-        /* SHHS EDFs exported by Compumedics wrote the start date as mm.dd.yy, so
-        "05.29.01" (29 May 2001) fails edflib's dd.mm.yy validation with
-        "startdate of recording is invalid: expected dd.mm.yy where mm should be
-        more than 00 and less than 13". edfopen_file_readonly refuses the file, so
-        nothing downstream ever runs.*/
-        std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
-        if (!f) return;   // unreadable or read-only; edfopen will say so
+    // SHHS EDFs exported by Compumedics wrote the start date as mm.dd.yy, so
+    // "05.29.01" (29 May 2001) fails edflib's dd.mm.yy validation and
+    // edfopen_file_readonly refuses the file.
+    //
+    // THE SOURCE IS NEVER WRITTEN. This used to patch those 8 bytes in the
+    // original EDF, in place. Now the original is only read; when it needs the
+    // fix, a COPY is made in `scratchDir`, the copy is patched, and the copy is
+    // what gets opened. Returns the copy's path, or empty when the original
+    // opens as it is. The caller deletes the copy when it is done.
+    std::filesystem::path edf_copy_with_fixed_startdate(const std::filesystem::path& path,
+        const std::filesystem::path& scratchDir) {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return {};   // unreadable; edfopen will say so
 
         char raw[8] = {};
-        f.seekg(168);
-        f.read(raw, 8);
-        if (!f) return;
+        in.seekg(168);
+        in.read(raw, 8);
+        if (!in) return {};
+        in.close();
 
         int a = 0, b = 0, c = 0;
         if (std::sscanf(std::string(raw, 8).c_str(), "%d.%d.%d", &a, &b, &c) != 3)
-            return;
-
+            return {};
         const bool ddmm = (a >= 1 && a <= 31) && (b >= 1 && b <= 12);
         const bool mmdd = (b >= 1 && b <= 31) && (a >= 1 && a <= 12);
+        if (ddmm) return {};    // already conforming (covers the ambiguous case too)
+        if (!mmdd) return {};   // not a date either way; let edflib report it
 
-        if (ddmm) return;    // already conforming (covers the ambiguous case too)
-        if (!mmdd) return;   // not a date either way; let edflib report it
-
+        std::error_code ec;
+        std::filesystem::create_directories(scratchDir, ec);
+        const std::filesystem::path copy =
+            scratchDir / (path.stem().string() + ".startdate_fixed.edf");
+        std::filesystem::copy_file(path, copy,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) {
+            std::cerr << "  [edf] could not copy " << path.filename().string()
+                << " to fix its start date: " << ec.message() << "\n";
+            return {};
+        }
         char fixed[16];
         std::snprintf(fixed, sizeof(fixed), "%02d.%02d.%02d", b, a, c);
+        std::fstream f(copy, std::ios::in | std::ios::out | std::ios::binary);
+        if (!f) { std::filesystem::remove(copy, ec); return {}; }
         f.seekp(168);
         f.write(fixed, 8);
-        f.flush();
+        f.close();
 
-        std::cerr << "  [edf] repaired mm.dd.yy start date in "
-            << path.filename().string() << ": "
-            << std::string(raw, 8) << " -> " << std::string(fixed, 8) << "\n";
+        std::cerr << "  [edf] " << path.filename().string() << ": mm.dd.yy start date "
+            << std::string(raw, 8) << " read as " << std::string(fixed, 8)
+            << " (via a temporary copy; the source file is unchanged)\n";
+        return copy;
     }
 
 
@@ -763,7 +781,7 @@ void make_binfile_edf(const std::filesystem::path& path, const config_entry& cfg
 // outPath lets a caller name the segment (e.g. <stem>_0.bin). Every channel is
 // sliced to the same wall-clock window on its own native grid, so the two time
 // axes (native raw / upsampled) stay identical across the segment set.
-void make_binfile_edf_window(const std::filesystem::path& path, const config_entry& cfg, const std::filesystem::path& outPath,  double winStartSec, double winEndSec)
+void make_binfile_edf_window(const std::filesystem::path& path, const config_entry& cfg, const std::filesystem::path& outPath, double winStartSec, double winEndSec)
 {
     char filebuf[1 << 16];
     std::ofstream out;
@@ -778,13 +796,23 @@ void make_binfile_edf_window(const std::filesystem::path& path, const config_ent
     out.write(zeroes.data(), HEADER_SIZE);
 
     auto hdr = std::make_unique<edf_hdr_struct>();
-    repair_edf_startdate(path);
-    if (edfopen_file_readonly(path.string().c_str(), hdr.get(),
+    // Opened read-only. A source with an mm.dd.yy start date is opened through
+    // a patched temporary copy beside the output; the original is never touched.
+    const std::filesystem::path tempCopy =
+        edf_copy_with_fixed_startdate(path, outPath.parent_path());
+    const std::filesystem::path openPath = tempCopy.empty() ? path : tempCopy;
+    auto dropTempCopy = [&]() {
+        if (tempCopy.empty()) return;
+        std::error_code ec;
+        std::filesystem::remove(tempCopy, ec);
+        };
+    if (edfopen_file_readonly(openPath.string().c_str(), hdr.get(),
         EDFLIB_READ_ALL_ANNOTATIONS)) {
         std::cerr << "ERROR: cannot open EDF " << path
             << " (edflib code " << hdr->filetype << ")\n";
         out.close();
         std::filesystem::remove(outPath);
+        dropTempCopy();
         return;
     }
 
@@ -813,9 +841,8 @@ void make_binfile_edf_window(const std::filesystem::path& path, const config_ent
     // upsampled block to the ECG target rate. For a window, the duration is the
     // window length (clamped to what the ECG channel actually has).
     {
-        double tsRate = (cfg.ecg_raw_rate > 0.0)
-            ? cfg.ecg_raw_rate
-            : edf_channel_rate(hdr.get(), sigmap[CH_ECG1]);
+        // The ECG's rate FROM THE EDF HEADER, like every channel below.
+        double tsRate = edf_channel_rate(hdr.get(), sigmap[CH_ECG1]);
         double tsDur = 0.0;
         if (sigmap[CH_ECG1] >= 0 && tsRate > 0.0) {
             long long total = edf_samples(hdr.get(), sigmap[CH_ECG1]);
@@ -834,9 +861,21 @@ void make_binfile_edf_window(const std::filesystem::path& path, const config_ent
     // slots (-1 in sigmap) or channels with no configured rate become
     // missing-channel placeholders via edf_to_bin -> write_missing. The window
     // is recomputed per channel because each has its own native rate.
-    auto write_signal_to_bin = [&](ChannelIdx ch, double rawRate = 0.0,
+    //
+    // NATIVE RATES COME FROM THE EDF HEADER (samples per data record / record
+    // duration), not from config.csv. The config value is now only a check:
+    // when it is set and disagrees with the header, the header wins and the
+    // mismatch is printed, because a wrong native rate stretches or squeezes
+    // every sample in time. The upsample (target) rate still comes from config.
+    auto write_signal_to_bin = [&](ChannelIdx ch, double cfgRawRate = 0.0,
         double upRate = 0.0) {
             int chIdx = sigmap[ch];
+            const double rawRate = edf_channel_rate(hdr.get(), chIdx);
+            if (chIdx >= 0 && cfgRawRate > 0.0 && rawRate > 0.0
+                && std::abs(rawRate - cfgRawRate) > 1e-6 * rawRate)
+                std::cerr << "  [edf] " << path.filename().string() << " '"
+                << hdr->signalparam[chIdx].label << "': header rate " << rawRate
+                << " Hz, config.csv says " << cfgRawRate << " Hz -- using the header\n";
             long long n = (chIdx < 0) ? 0 : edf_samples(hdr.get(), chIdx);
             long long lo = 0, hi = -1;
             if (chIdx >= 0 && rawRate > 0.0) sampleWindow(rawRate, lo, hi);
@@ -887,6 +926,7 @@ void make_binfile_edf_window(const std::filesystem::path& path, const config_ent
     write_signal_to_bin(CH_ART_PULM, cfg.art_pulm_raw_rate, cfg.art_pulm_upsample_rate);
 
     edfclose_file(hdr->handle);
+    dropTempCopy();
 
     auto sleep_path = findSleepXml(path, cfg.sleep_file_extention);
 
@@ -1081,69 +1121,21 @@ void make_binfile_dat(const std::filesystem::path& path,
     write_header_and_close(out, cfg, sizes_up, sizes_raw, native_rates, up_rates, sleep_size);
 }
 
-namespace {
-    // Recording duration in seconds, taken from the primary ECG channel's
-    // sample count and configured native rate. Returns 0 on any failure.
-    double edf_duration_seconds(const std::filesystem::path& path,
-        const config_entry& cfg)
-    {
-        auto hdr = std::make_unique<edf_hdr_struct>();
-        if (edfopen_file_readonly(path.string().c_str(), hdr.get(),
-            EDFLIB_READ_ALL_ANNOTATIONS)) {
-            return 0.0;
-        }
-        EdfSignalMap sigmap = build_edf_channel_map(hdr.get(), cfg);
-        double rate = (cfg.ecg_raw_rate > 0.0)
-            ? cfg.ecg_raw_rate
-            : edf_channel_rate(hdr.get(), sigmap[CH_ECG1]);
-        long long n = (sigmap[CH_ECG1] >= 0)
-            ? edf_samples(hdr.get(), sigmap[CH_ECG1]) : 0;
-        edfclose_file(hdr->handle);
-        return (rate > 0.0 && n > 0) ? (double)n / rate : 0.0;
-    }
-
-    // Seconds in one output segment. 8 hours.
-    constexpr double SEGMENT_SECONDS = 8.0 * 3600.0;
-}
-
 std::filesystem::path make_binfile(const std::filesystem::path& path, const config_entry& cfg)
 {
-    /*
-        creates output path, and calls the edf or dat specific function to write the bin file.
-    */
+    //creates output path, and calls the edf or dat specific function to write the bin file.
+    
     std::filesystem::path out = make_out_path(path, cfg);
 
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
 
     if (ext == ".EDF") {
-        // BITTIUM: split the recording into fixed 8-hour segments, each written
-        // as its own valid .bin named <stem>_0.bin, <stem>_1.bin, ... The final
-        // segment shorter than 8 h is kept as-is. All other EDF datasets write
-        // a single whole-recording .bin.
-        if (cfg.dataset_type == "BITTIUM") {
-            double dur = edf_duration_seconds(path, cfg);
-            if (dur <= 0.0) {
-                std::cerr << "ERROR: could not determine duration of "
-                    << path.filename().string() << "; writing single .bin\n";
-                make_binfile_edf(path, cfg);
-                return out;
-            }
-            int nSeg = (int)std::ceil(dur / SEGMENT_SECONDS);
-            if (nSeg < 1) nSeg = 1;
-            const std::string stem = path.stem().string();
-            std::filesystem::path firstOut;
-            for (int s = 0; s < nSeg; ++s) {
-                double t0 = s * SEGMENT_SECONDS;
-                double t1 = (s == nSeg - 1) ? -1.0 : (s + 1) * SEGMENT_SECONDS;
-                std::filesystem::path segOut =
-                    std::filesystem::path(cfg.output_path) /
-                    (stem + "_" + std::to_string(s) + ".bin");
-                if (s == 0) firstOut = segOut;
-                make_binfile_edf_window(path, cfg, segOut, t0, t1);
-            }
-            return firstOut;
-        }
+        // ONE RECORD PER RECORDING, Bittium included. Bittium used to be split
+        // here into 8-hour <stem>_0.bin, <stem>_1.bin, ... segments; it is now
+        // written whole, like every other EDF dataset. The marking GUI pages
+        // through a long record 8 hours at a time on its own, so nothing
+        // downstream needs the split.
         make_binfile_edf(path, cfg);
     }
     else if (ext == ".DAT") {

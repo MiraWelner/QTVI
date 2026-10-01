@@ -56,7 +56,6 @@
 #include "fiducial_marker_finding/feature_marks.hpp"
 #include "fiducial_marker_finding/alignment.hpp"
 #include "fiducial_marker_finding/global_intervals.hpp"
-#include "fiducial_marker_finding/global_interval_lines.hpp"
 #include "fiducial_marker_finding/vcg_signal_average.hpp"
 #include "fiducial_marker_finding/ppg_derivative.hpp"
 #include "fiducial_marker_finding/subsample_refine.hpp"
@@ -89,6 +88,7 @@ public:
     // (re)constructed here so the directory is created up front.
     void setBoundaryTrainingDir(const QString& dir) {
         m_boundaryLog = boundary_training::BoundaryTrainingLog(dir.toStdString());
+        m_logsDir = dir;
     }
     // ---- THE BANKS AS THE OPERATOR LEFT THEM ----------------------------
     //
@@ -271,7 +271,8 @@ private:
     // selected by BIC). Recomputed at save, same window convention as the
     // boundary log.
     void writeLandmarkFitsCsv(const std::string& dir);
-    std::array<std::vector<std::array<FeatureMarks::TemplateLandmarks, 3>>, 4>  m_exportLm;
+    std::array<std::vector<std::array<FeatureMarks::TemplateLandmarks, 3>>,
+        anchor_view::anchor_array.size()>  m_exportLm;
 
     static int anchorSlot(AnchorType a);
     void primeExportLandmarks();
@@ -387,6 +388,7 @@ private:
     QVBoxLayout* m_focusLay = nullptr;
     void setFocusSplit(bool split);
     boundary_training::BoundaryTrainingLog m_boundaryLog;
+    QString m_logsDir;
 
     std::map<long long, double> m_touchedMarks;
     static long long touchKey(int binIdx, int leadIdx, int marker, AnchorType a) {
@@ -410,6 +412,30 @@ private:
     QString m_subjectId;
     double  m_sampleRate = 0.0;    // ECG rate; also feeds ECG-only feature/ms code below
     double  m_ppgRateHz = 0.0;
+    // The record's measured ECG-to-pulse lags (TemplateFile::lag). DISPLAY
+    // ONLY: the ECG is drawn later by the lag (ecgDisplayShiftMs) so it lines
+    // up with the pulse; nothing measured, marked or written is shifted.
+    // Written back as a trailer on _template_markings.bin.
+    channel_offset::RecordLag m_recordLag;
+
+    // The ECG is drawn later by PPG's confident lag, or by the arterial lag
+    // when PPG has none. One ECG cannot line up with two groups at once, so
+    // the other group is drawn by the DIFFERENCE (pulseDisplayAnchor) -- which
+    // keeps every channel where the physiology put it relative to the ECG.
+    double ecgDisplayShiftMs() const {
+        const double p = m_recordLag.ppg.usableLagMs();
+        return (p > 0.0) ? p : m_recordLag.arterial.usableLagMs();
+    }
+    // A pulse channel's anchor for drawing: its own column, moved by however
+    // much its group's lag differs from the ECG's shift. A group with no
+    // confident lag is drawn as recorded. A -1 anchor stays -1 (undrawn).
+    double pulseDisplayAnchor(double rConstruct, bool arterial, double rateHz) const {
+        if (rConstruct < 0.0 || !(rateHz > 0.0)) return rConstruct;
+        const double own = arterial ? m_recordLag.arterial.usableLagMs()
+            : m_recordLag.ppg.usableLagMs();
+        if (!(own > 0.0)) return rConstruct;
+        return rConstruct + (own - ecgDisplayShiftMs()) * 0.001 * rateHz;
+    }
     double  m_abpRateHz = 0.0;
     double  m_artRateHz = 0.0;
     double  m_artPulmRateHz = 0.0;

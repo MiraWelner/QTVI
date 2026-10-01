@@ -5,6 +5,12 @@
 //this calculates the earliest onset and latest offset for the QRS complex across all three leads, and returns the result as a GlobalIntervals struct.  The caller can then use that to draw vertical lines on 
 // each lead's template panel, so the earliest onset and latest offset are visible in every lead.
 //
+// NO GUI HERE, and that is deliberate: this header is on the build pipeline's
+// include path (bin_pulse -> normalize_template_amplitude ->
+// vcg_signal_average -> here). It stops at COLUMNS -- channelColumns() puts the
+// R-relative boundaries into one channel's sample columns -- and the drawing
+// lives with the widget that draws them, in bin_plot_widget.hpp/.cpp.
+//
 
 #include "template_marking_bin_io.hpp"   // TemplateBin, AnchorType
 
@@ -48,6 +54,23 @@ namespace global_intervals {
     };
 
     /**
+     * @brief One channel's own R column, sub-sample where available. -1 when
+     *        the channel is out of range or has none.
+     *
+     *        THE ONE PLACE this is decided. R is auto-only and not per-anchor:
+     *        the sub-sample detection if there is one, else the integer column.
+     *        Both the landmark extraction below and the reference-line columns
+     *        convert through it, so the two can never disagree about where a
+     *        channel's R is.
+     */
+    inline double rColumnFor(const time_bin& bin, int ch) {
+        if (ch < 0 || ch >= kNumEcgCh) return kNotFound;
+        return (bin.r_peak_auto_ch[ch] >= 0.0)
+            ? bin.r_peak_auto_ch[ch]
+            : static_cast<double>(bin.r_peak_ch[ch]);
+    }
+
+    /**
      * @brief Extract one channel's landmarks from a bin.
      *
      * @param ch      0..2.
@@ -65,11 +88,7 @@ namespace global_intervals {
         LeadMarkers m;
         if (ch < 0 || ch >= kNumEcgCh) return m;
 
-        // R is auto-only and not per-anchor. Prefer the sub-sample value, fall
-        // back to the integer column.
-        m.rPeak = (bin.r_peak_auto_ch[ch] >= 0.0)
-            ? bin.r_peak_auto_ch[ch]
-            : static_cast<double>(bin.r_peak_ch[ch]);
+        m.rPeak = rColumnFor(bin, ch);
 
         if (src == MarkerSource::AUTO) {
             // Glyph side: these flat fields hold the R alignment's detections
@@ -210,10 +229,44 @@ namespace global_intervals {
         return g;
     }
 
+    // -----------------------------------------------------------------------
+    // THE GLOBAL BOUNDARIES IN ONE CHANNEL'S COLUMNS
+    // -----------------------------------------------------------------------
+    //
+    // GlobalIntervals reports its boundaries as R-RELATIVE sample offsets,
+    // because each channel is aligned independently (its own r_col_raw) and so
+    // has its own column space. Drawing the same column number in all three
+    // panels would put the line at a different physical instant in each one,
+    // which is exactly the error the global measurement exists to avoid.
+    //
+    // This is the one conversion that fixes it: column = offset + THIS
+    // channel's own R column. Same instant, three different column numbers.
+    //
+    // -1 for a boundary that is absent, or for every boundary when the
+    // intervals are not established or the channel has no R -- with no R there
+    // is no way to place a shared-axis offset in this channel's columns, and a
+    // line at the raw offset would land near sample 0 and look like a real
+    // boundary.
+    struct ChannelColumns {
+        double qrsOnset = kNotFound;
+        double qrsOffset = kNotFound;
+    };
+
+    inline ChannelColumns channelColumns(const time_bin& bin,
+        const GlobalIntervals& g, int ch) {
+        ChannelColumns out;
+        if (!g.valid) return out;
+        const double rc = rColumnFor(bin, ch);
+        if (rc < 0.0) return out;
+        if (!std::isnan(g.qrsOnset))  out.qrsOnset = g.qrsOnset + rc;
+        if (!std::isnan(g.qrsOffset)) out.qrsOffset = g.qrsOffset + rc;
+        return out;
+    }
+
     /// Convenience overload: straight from a bin.
     inline GlobalIntervals computeGlobalIntervals(const time_bin& bin,
         AnchorType anchor, double rateHz, MarkerSource src = MarkerSource::USER) {
         return computeGlobalIntervals(allLeadMarkers(bin, anchor, src), rateHz);
     }
 
-}  // namespace global_intervals#pragma once
+}  // namespace global_intervals

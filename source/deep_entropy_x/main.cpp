@@ -198,7 +198,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     const std::string initials = get_initials();
-    cfg.log_path = cfg.output_path + "/log_" + initials;
+    cfg.log_path = cfg.output_path + "/" + initials + "_progress_logs";
     std::filesystem::create_directories(cfg.log_path);
     std::cout << "Logging to: " << cfg.log_path << "\n";
 

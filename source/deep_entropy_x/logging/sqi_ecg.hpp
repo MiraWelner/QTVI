@@ -242,7 +242,7 @@ inline void writeEcgSQICsv(const config_entry& cfg,
     const template_structs::BeatsFile& beats,
     double ecgFs,
     const LeadPolarity& pol) {
-    const std::string outPath = cfg.quality_metric + "/" + stem + "_quality.csv";
+    const std::string outPath = cfg.training_log + "/" + stem + "_quality.csv";
     std::ofstream f(outPath);
     if (!f.is_open()) {
         std::cerr << "  WARNING: could not open " << outPath << " for SQI output\n";

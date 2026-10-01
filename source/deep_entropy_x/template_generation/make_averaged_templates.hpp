@@ -23,6 +23,7 @@
 #include "template_generation/bin_ecg.hpp"
 #include "template_generation/split_bins_to_templates.hpp"
 #include "template_generation/template_io.hpp"
+#include "template_generation/bank_reload.hpp"
 #include "template_generation/nsvt_detect.hpp"
 #include "noise_marking_gui/annotation_types.hpp"
 
@@ -171,7 +172,12 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // existing caller compiles and behaves exactly as before: no path means no
     // operator classes, every slice reads kUnlabeled, and the bank has one
     // partition -- which is the pre-partitioning behaviour.
-    const std::string& noise_bin_path = {}) {
+    const std::string& noise_bin_path = {},
+    // The PREVIOUS run's partition, read before this build (it rewrites the
+    // archive). Applied below to the bins that pass bank_reload's two gates,
+    // BEFORE <stem>_templates.bin is written -- so the archive on disk always
+    // holds the partition the operator is about to see. Null = no reload.
+    bank_reload::SplitArchive* priorSplit = nullptr) {
     size_t n = wave_data.size();
     // ---- phase timing: which part of the "fast" build is slow ----------
     auto _ms = [](std::chrono::steady_clock::time_point a,
@@ -228,7 +234,8 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 
     const auto _ppg0 = std::chrono::steady_clock::now();
     if (has_ppg && rates.ppg > 0.0) {
-        PPGTemplatesResult ppg_res = CreatePulseTemplates(wave_data, &output_binfile_data::ppgSignal, rates.ecg, rates.ppg);
+        PPGTemplatesResult ppg_res = CreatePulseTemplates(wave_data, &output_binfile_data::ppgSignal, rates.ecg, rates.ppg,
+            rates.ppg_lag_ms);
         ppg_templates = std::move(ppg_res.templates);
         ppg_template_stds = std::move(ppg_res.iqrs);
         ppg_kept = std::move(ppg_res.kept);
@@ -236,6 +243,11 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         ppg_onset_cols = std::move(ppg_res.footCol);
         ppg_r_cols = std::move(ppg_res.rCol);
         ppg_kept_slices = std::move(ppg_res.keptSlices);
+
+        // <stem>_ptt.csv. PPG only: CreatePulseTemplates measures the same
+        // for ABP / ART, but the log is the ECG-to-PPG transit time.
+        ptt_log::write(ppg_res.ptt);
+        ptt_log::stashTransit("PPG", ppg_res.ptt);   // written with the arterial ones
 
         for (size_t i = 0; i < n; ++i)
             for (double v : ppg_templates[i])
@@ -623,6 +635,38 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         // which the viewer already interprets as "no PPG for this bin".
     }
 
+    // ---- THE SLICING FINGERPRINT, AND THE PRIOR PARTITION WHERE IT HOLDS ----
+    //
+    // Per bin, over what makes a member index name a heartbeat: the bin's
+    // R-peaks, the rates, and every channel's kept-row -> R-pair map. Written
+    // beside the archive below so the NEXT run can tell whether its rows are
+    // these rows. See bank_reload.hpp.
+    std::vector<uint64_t> slicingFp(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        if (wave_data[i].bad_segment) continue;
+        std::array<const std::vector<size_t>*, 3> ek{ { nullptr, nullptr, nullptr } };
+        for (int c = 0; c < 3; ++c)
+            if (i < ecg_res.kept_index[c].size()) ek[c] = &ecg_res.kept_index[c][i];
+        const std::vector<uint32_t>* pk =
+            (i < ppg_kept_slices.size()) ? &ppg_kept_slices[i] : nullptr;
+        slicingFp[i] = bank_reload::slicing::hashBin(wave_data[i].ch1.raw,
+            rates.ecg, rates.ppg, ek, pk);
+    }
+
+    // BEFORE the blocks below take pointers into bank_by_channel, and before
+    // anything is written from them. bins.csv's per-bin counts and the NSVT
+    // pass above describe the fresh partition; the templates themselves, and
+    // every file written from `blocks`, describe the reloaded one.
+    if (priorSplit) {
+        bank_reload::applySplit(*priorSplit, n,
+            [&result](size_t b, int c) -> tbank::TemplateBank* {
+                if (b >= result.size() || c < 0 || c > 3) return nullptr;
+                auto it = result[b].bank_by_channel.find(kChanKeys[c]);
+                return (it == result[b].bank_by_channel.end()) ? nullptr : &it->second.bank;
+            },
+            slicingFp);
+    }
+
     //write templates.csv, beats.bin, templates.bin, and bins.csv.
     for (size_t i = 0; i < n; ++i) {
         for (int c = 0; c < 4; ++c) {
@@ -747,6 +791,12 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         };
 
     templates_io::writeTemplatesBin(blocks);
+    // Beside the archive, from the same run, so the two always describe the
+    // same slicing.
+    if (!templates_io::g_dir.empty() && !templates_io::g_stem.empty())
+        bank_reload::slicing::write(
+            templates_io::g_dir + "/" + templates_io::g_stem + "_slicing.bin",
+            slicingFp);
 
     return result;
 }

@@ -31,6 +31,13 @@ struct SignalRates {
     double artPulm = 0.0;
     double morph_halfwin_ecg_pct_rr = 0.0;
     double morph_halfwin_ppg_pct_rr = 0.0;
+    // PULSE WINDOW OFFSETS, ms: the measured, confident ECG-to-channel
+    // hardware lag (channel_offset), or 0. Where each beat's pulse landmarks
+    // are SEARCHED for -- [R + lag, next R + lag] -- and nothing else; the
+    // signals are never shifted. Set by analysis_job::prepare after the lag is
+    // measured; 0 for every non-CHAOS record.
+    double ppg_lag_ms = 0.0;
+    double arterial_lag_ms = 0.0;
 };
 
 struct config_entry {
@@ -76,9 +83,26 @@ struct config_entry {
     double blanking_period = 0.0;
     double threshold = 0.0;
     double bin_size_minutes = 0.0;
-
+    // MORPHOLOGY SPLIT THRESHOLDS, Pearson band-match scores in (0, 1].
+    // Were ecg_match_floor / ppg_match_floor. Renamed because the defaults
+    // moved off 0.0 at the same time: 0.0 was a threshold every beat cleared,
+    // so a blank cell disabled the split silently. An absent key now leaves
+    // the compiled 0.85 / 0.80 and says so on the [morphology] line.
+    //
+    // SET INDEPENDENTLY. One may be present and the other blank.
     double morph_threshold_ecg = 0.0;
     double morph_threshold_ppg = 0.0;
+    // PULSE QC CORRELATION FLOOR: a Pearson r in (0, 1] -- NOT a percent.
+    // Was ppg_fit_error_pct, an RMS error CEILING in (0, 100]. The key is
+    // renamed rather than reused deliberately: an old config.csv carrying
+    // ppg_fit_error_pct=10 would otherwise be read as a correlation floor of
+    // 10, refused as out of range, and fall back to the default silently. A
+    // missing key does the same thing, but the [pulseqc] line says so.
+    //
+    // NOT THE SAME THING as morph_threshold_ppg. Both are Pearson
+    // correlations on the pulse channel, and they answer different questions:
+    // this one whether a pulse enters its bin's template at all, that one
+    // which morphology group a beat joins.
     double pulse_qc_corr_floor = 0.0;
     int min_beats_template_ecg = 0;
     int min_beats_template_ppg = 0;
@@ -95,11 +119,11 @@ struct config_entry {
     std::string r_peak_data_path;
     std::string template_path;
     std::string fiducial_marker_locations;
-    std::string quality_metric;
     std::string snapshot_path;
     std::string log_path;
     std::string training_log;
     std::string vcg_output;
+
 
     // Different filetypes have different terms for the same type of signal,
     // If only one filetype has a given type of data (ie only bittium has accelration) then the label
@@ -142,6 +166,14 @@ struct config_entry {
 
 
     bool use_consensus_rpeak = true;
+    // THE BEAT AFTER AN ECTOPIC ONE (baseqt_gissipheno.m, the
+    // flag_beat_after_PVC_is_ok4qt.txt test). When true -- the default, as in
+    // the Matlab, where the beat was disqualified unless that flag file
+    // existed -- a good beat right after a PVC / PAC / VT mark or a premature
+    // beat is kept in the sinus partition and in the RR series, and left out
+    // of its template's average and therefore of QT. config.csv column
+    // exclude_beat_after_ectopic; 0 / false keeps it as an ordinary beat.
+    bool exclude_beat_after_ectopic = true;
     double notch_filter_hz = 0.0;
     double waveform_highpass_hz = 0.0;
 

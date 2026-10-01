@@ -260,6 +260,7 @@ void TemplateViewerWindow::loadSubject(const template_structs::TemplateFile& tf,
     m_artRateHz = artRateHz;
     m_artPulmRateHz = artPulmRateHz;
     m_notchFilterHz = notchFilterHz;
+    m_recordLag = tf.lag;
     setTitleForSubject();
     ui->subjectLabel->setText(subjectId);
     ui->finishButton->setText("Finish");
@@ -738,16 +739,17 @@ void TemplateViewerWindow::applyAlignmentSelection(bool force, AnchorType a) {
             m_lastFocusTemplateIdx, m_lastFocusMarker, m_lastFocusCol);
 }
 
-// P -> Q -> R -> J -> P. The ring is spelled out rather than taken from
+// P -> Q -> R -> J -> T -> P. The ring is spelled out rather than taken from
 // anchor_view::kAllAnchors, which is in CSV-merge order (R, P, Q, J): that is
 // the order columns are written in and is not the order an operator wants to
 // walk a beat in. Changing one must not change the other.
 namespace {
-    constexpr std::array<AnchorType, 4> kAlignRing = {
+    constexpr std::array<AnchorType, 5> kAlignRing = {
         AnchorType::P_ONSET,
         AnchorType::Q_ONSET,
         AnchorType::R_PEAK,
         AnchorType::J_POINT,
+        AnchorType::T_END,
     };
     const char* alignRingButton(AnchorType a) {
         switch (a) {
@@ -755,6 +757,7 @@ namespace {
         case AnchorType::Q_ONSET: return "q_align_button";
         case AnchorType::R_PEAK:  return "r_align_button";
         case AnchorType::J_POINT: return "j_point_align_button";
+        case AnchorType::T_END:   return "t_end_align_button";
         }
         return "r_align_button";
     }
@@ -821,6 +824,9 @@ void TemplateViewerWindow::wireAlignButtons() {
         { "p_align_button",         true,  AnchorType::P_ONSET },
         { "q_align_button",         true,  AnchorType::Q_ONSET },
         { "j_point_align_button",         true,  AnchorType::J_POINT },
+        // Not in the .ui yet: add a radio named t_end_align_button in Designer.
+        // Until then T is reachable by the T key and by Tab.
+        { "t_end_align_button",     true,  AnchorType::T_END   },
         { "automatic_align_button", false, AnchorType::R_PEAK  },
     };
     for (const Btn& b : kBtns) {
@@ -845,6 +851,7 @@ void TemplateViewerWindow::wireAlignButtons() {
         { "Q", "q_align_button",         true,  AnchorType::Q_ONSET },
         { "R", "r_align_button",         true,  AnchorType::R_PEAK  },
         { "J", "j_point_align_button",   true,  AnchorType::J_POINT },
+        { "T", "t_end_align_button",     true,  AnchorType::T_END   },
     };
     for (const Key& k : kKeys) {
         const char* btn = k.btn;

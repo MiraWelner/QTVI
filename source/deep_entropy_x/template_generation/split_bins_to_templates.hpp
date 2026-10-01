@@ -931,26 +931,21 @@ namespace jbank {
             static_cast<uint32_t>(bank.groups[0].members.size());
     }
 
-    // ---- THE PARTITION KEY, WITH INHERITANCE ----------------------------
+    // ---- THE PARTITION KEY ----------------------------------------------
     //
-    // partitionKeys applies the post-ectopic inheritance rule --
-    // the beat AFTER a PVC/PAC/VT inherits ECTOPIC when it carries no mark of
-    // its own -- but returns tbank::Category, which collapses PVC, PAC and VT
-    // into one value. The spec partitions by CLASS, not by category: PVC and
-    // PAC must not cluster together any more than PVC and sinus must.
+    // The operator's own mark, slice for slice, and nothing inherited. This
+    // used to hand the beat AFTER a PVC / PAC / VT its predecessor's code when
+    // it had none of its own, which put a sinus beat in the PVC partition and
+    // averaged it into the ectopic template. That beat is sinus: it stays in
+    // the sinus partition, and the beat-after-ectopic rule
+    // (BeatFlags::post_ectopic) keeps it out of the sinus average instead.
     //
-    // So the same rule is applied to the CODES. Deliberately the same rule and
-    // not an approximation of it: categoryForLabelCode decides which codes are
-    // ectopic, and that decision stays in template_bank.hpp.
+    // Kept as a function, not inlined to mark_code, so the partition and the
+    // flags still read the one vector and cannot describe different
+    // populations.
     inline std::vector<uint8_t> partitionKeys(const std::vector<uint8_t>& mark_code)
     {
-        std::vector<uint8_t> out = mark_code;
-        for (size_t i = 1; i < out.size(); ++i)
-            if (mark_code[i] == 0
-                && tbank::categoryForLabelCode(mark_code[i - 1])
-                == tbank::Category::ECTOPIC)
-                out[i] = mark_code[i - 1];
-        return out;
+        return mark_code;
     }
 
     // Every slice in order. `n_slices` is the R-pair count for the bin, which
@@ -1080,7 +1075,12 @@ namespace jbank {
         // built by align_beat_matrix -- which shifts rows and takes a column
         // median and does nothing else. members_clean is the only gate left,
         // so a verdict that is not here is not applied anywhere.
-        TUKEY_RR_LENGTH = 8
+        TUKEY_RR_LENGTH = 8,
+        // THE BEAT AFTER AN ECTOPIC ONE: a good beat whose predecessor was
+        // marked PVC / PAC / VT or flagged premature. Out of the average (and
+        // so out of QT), in the sinus partition, its RR untouched. See
+        // BeatFlags::post_ectopic.
+        POST_ECTOPIC = 9
     };
 
 
@@ -1105,6 +1105,7 @@ namespace jbank {
         uint32_t excluded_vote = 0;
         uint32_t excluded_tukey = 0;
         uint32_t excluded_category = 0;
+        uint32_t excluded_post_ectopic = 0;
         uint32_t kept = 0;
         // Groups whose every member was premature, so nothing was removed. That
         // is the ectopic morphology itself and it must keep its waveform;
@@ -1207,7 +1208,7 @@ namespace jbank {
             // version zeroed the record-wide counters whenever any one group
             // turned out to be entirely premature, so a single all-ectopic
             // group erased every exclusion count in the bin.
-            uint32_t ex_cat = 0, ex_prem = 0, ex_vote = 0, ex_noise = 0;
+            uint32_t ex_cat = 0, ex_prem = 0, ex_vote = 0, ex_noise = 0, ex_post = 0;
             std::vector<uint32_t> clean;
             clean.reserve(g.members.size());
             for (const uint32_t m : g.members) {
@@ -1222,6 +1223,14 @@ namespace jbank {
                         static_cast<uint8_t>(ExcludeReason::CATEGORY);
                     ++ex_cat;
                     if (cat == tbank::Category::NOISE) ++ex_noise;
+                    continue;
+                }
+                // A MEMBER, NOT AVERAGED. It stays in this (sinus) group --
+                // its partition is unchanged -- and only leaves the average.
+                if (m < flags.size() && flags[m].post_ectopic) {
+                    excluded_reason[m] =
+                        static_cast<uint8_t>(ExcludeReason::POST_ECTOPIC);
+                    ++ex_post;
                     continue;
                 }
                 const tbank::PvcFilter v = (m < flags.size())
@@ -1251,11 +1260,12 @@ namespace jbank {
                     clean = g.members;
                     for (const uint32_t m : clean)
                         excluded_reason[m] = static_cast<uint8_t>(ExcludeReason::KEPT);
-                    ex_cat = ex_prem = ex_vote = 0;   // this group only
+                    ex_cat = ex_prem = ex_vote = ex_post = 0;   // this group only
                     if (counts) ++counts->groups_all_premature;
                 }
             }
             if (counts) {
+                counts->excluded_post_ectopic += ex_post;
                 counts->excluded_category += ex_cat;
                 counts->excluded_premature += ex_prem;
                 counts->excluded_vote += ex_vote;
@@ -1435,12 +1445,15 @@ namespace jbank {
     // matters; it is not a threshold, and a "band of 0.60 to 0.85" read out of
     // it was this function refusing beats it exists to blend.
     //
-    // RUNS AFTER cleanGroups, so a beat excluded on OTHER evidence -- a
-    // CATEGORY mark or a Tukey fence -- is not also substituted. Substituting a
-    // beat that is not in the average for a reason unrelated to its interval is
-    // work with no consumer, and flagging it twice would double-count it in any
-    // burden statistic. PREMATURE and VOTE are not exclusions here: they are
-    // the trigger.
+    // RUNS AFTER cleanGroups, and reads its verdict: a beat is substituted
+    // exactly when cleanGroups excluded it as PREMATURE or VOTE. A beat
+    // excluded on OTHER evidence -- a CATEGORY mark or a Tukey fence -- is not
+    // also substituted: it is not in the average for a reason unrelated to its
+    // interval, so the blend has no consumer, and flagging it twice would
+    // double-count it in any burden statistic. And a flagged beat that is
+    // still KEPT -- every member of an entirely premature group, which
+    // cleanGroups keeps because it IS the ectopic morphology -- left no hole
+    // and is not substituted.
     //
     // NOTHING IS OVERWRITTEN. The blend is stored beside the beat, never in
     // place of it: a substituted beat is not an observation. members_clean is
@@ -1479,28 +1492,28 @@ namespace jbank {
             // beats drift toward it rather than each being pulled the same
             // distance from it. members is sorted, so iterating it is time order.
             for (const uint32_t slice : g.members) {
-                // THE TRIGGER, read off the rhythm verdict. A premature or
-                // voted beat carries ExcludeReason::PREMATURE / VOTE, so
-                // filtering on `excluded_reason == KEPT` admitted exactly the
-                // beats this function is not for and skipped every one it is --
-                // inverted everywhere except a group that was entirely
-                // premature, where cleanGroups resets the reasons to KEPT.
+                // THE TRIGGER: THE BEAT LEFT ITS GROUP'S AVERAGE ON ITS RHYTHM.
+                // cleanGroups records that as ExcludeReason PREMATURE or VOTE,
+                // and those are the only beats substituted -- the FLAGGED
+                // beats, the ones whose absence is the hole this fills.
                 //
-                // flags[].pvc survives that reset, which is why it is the right
-                // thing to read: it says what the beat IS, not what happened to
-                // it afterwards.
-                const tbank::PvcFilter pv = (slice < flags.size())
-                    ? flags[slice].pvc : tbank::PvcFilter::NONE;
-                if (pv == tbank::PvcFilter::NONE) continue;
-
-                // Excluded on other evidence: not substituted. Everything
-                // except KEPT, PREMATURE and VOTE means a CATEGORY mark, a
-                // Tukey fence, or no group at all.
-                if (slice < excluded_reason.size()) {
+                // NOT flags[].pvc, which this used to read. pvc says what the
+                // beat IS, and it survives cleanGroups' reset of an entirely
+                // premature group to KEPT -- so every beat of the ectopic
+                // morphology itself, all of them in the average and none of
+                // them missing from anything, was blended and flagged
+                // substituted. Those are KEPT beats: observations the template
+                // is built from, and n_blended_members counted the whole group
+                // as synthetic. A KEPT beat is never substituted now.
+                //
+                // Everything else -- CATEGORY (an operator mark), a Tukey
+                // fence, NOT_A_MEMBER -- is excluded on other evidence and is
+                // not substituted either, as before.
+                if (slice >= excluded_reason.size()) continue;
+                {
                     const ExcludeReason er =
                         static_cast<ExcludeReason>(excluded_reason[slice]);
-                    if (er != ExcludeReason::KEPT
-                        && er != ExcludeReason::PREMATURE
+                    if (er != ExcludeReason::PREMATURE
                         && er != ExcludeReason::VOTE) continue;
                 }
 
@@ -1816,16 +1829,9 @@ namespace jbank {
         // against. Computing them here rather than before runBank() is what
         // makes that structural instead of a convention.
         out.flags.assign(in.n_slices, tbank::BeatFlags{});
-        // FROM pkeys, not a second pass over the marks: the beat
-        // AFTER an ectopic one inherits ECTOPIC when it carries no mark of its
-        // own, and that rule needs the neighbouring mark, so it cannot be
-        // applied one beat at a time.
-        // FROM pkeys, THE SAME VECTOR THE PARTITION USED. partitionKeys
-        // already applied the post-ectopic inheritance, so mapping each key
-        // through categoryForLabelCode reproduces those categories exactly
-        // -- with the guarantee that the flags and the partition describe one
-        // population rather than two computed from the same input by two
-        // functions that could drift.
+        // FROM pkeys, THE SAME VECTOR THE PARTITION USED, so the flags and the
+        // partition describe one population rather than two computed from the
+        // same input by two functions that could drift.
         std::vector<tbank::Category> cats;
         if (!pkeys.empty()) {
             cats.resize(pkeys.size());
@@ -1852,6 +1858,35 @@ namespace jbank {
             for (uint32_t s = 0; s < in.n_slices
                 && s < out.pvc.verdict.size(); ++s)
                 out.flags[s].pvc = out.pvc.verdict[s];
+        }
+
+        // ---- THE BEAT AFTER AN ECTOPIC ONE ------------------------------
+        //
+        // baseqt_gissipheno.m, the beat-after-PVC block: for each beat that is
+        // ectopic, the NEXT beat, if it is good, is disqualified from QT. Here:
+        //   trigger   slice s-1 is marked PVC / PAC / VT (category ECTOPIC), or
+        //             flagged PREMATURE by the interval test. VOTE is not a
+        //             trigger: it says the beat sits in a run, not that it is
+        //             early.
+        //   good      slice s is otherwise unexcluded -- category REGULAR (no
+        //             mark, not noise) and no rhythm flag (neither PREMATURE
+        //             nor VOTE). A beat that is itself ectopic or noisy is
+        //             already out for that reason, as in the Matlab's
+        //             listcycok(per+1) > 0 test.
+        // Read off the flags as they stand BEFORE this pass, so a flagged beat
+        // never triggers the next: the rule reaches one beat, not a chain.
+        // Slices are R-pairs within this bin; the first slice of a bin is not
+        // tested against the previous bin's last beat.
+        if (tbank::excludePostEctopic()) {
+            for (uint32_t s = 1; s < in.n_slices; ++s) {
+                const tbank::BeatFlags& prev = out.flags[s - 1];
+                tbank::BeatFlags& cur = out.flags[s];
+                const bool trigger = prev.category == tbank::Category::ECTOPIC
+                    || prev.pvc == tbank::PvcFilter::PREMATURE;
+                const bool good = cur.category == tbank::Category::REGULAR
+                    && cur.pvc == tbank::PvcFilter::NONE;
+                if (trigger && good) cur.post_ectopic = true;
+            }
         }
 
         // The category census, over the flags just built. Before cleanGroups so

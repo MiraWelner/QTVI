@@ -85,6 +85,11 @@ namespace tbank {
     //
     // Each returns false and changes nothing when its own value is outside
     // (0, 1]; the other side is unaffected either way.
+    // ---- THE BEAT-AFTER-ECTOPIC SWITCH (config exclude_beat_after_ectopic) --
+    namespace post_ectopic_rule { inline bool g_on = true; }
+    inline void setExcludePostEctopic(bool on) { post_ectopic_rule::g_on = on; }
+    inline bool excludePostEctopic() { return post_ectopic_rule::g_on; }
+
     inline bool setMorphThresholdEcg(double r) {
         if (!(r > 0.0 && r <= 1.0)) return false;
         correlation_floors::g_ecg = r;
@@ -166,8 +171,8 @@ namespace tbank {
     //the only categories taken into account are regular - eventually there will be 5
     enum class Category : uint8_t {
         REGULAR = 1,   // unmarked; also 6) Cond. Delay, 7) AF, 8) SVT for now
-        ECTOPIC = 2,   // marks 4) PVC, 5) PAC, 9) VT, and the postEligible
-        //   beat following each of them
+        ECTOPIC = 2,   // marks 4) PVC, 5) PAC, 9) VT. NOT the beat after one:
+        //   that beat is sinus and stays REGULAR; see BeatFlags::post_ectopic
         NOISE = 3    // mark 2) Minor Noise
     };
 
@@ -237,6 +242,16 @@ namespace tbank {
         // assignment against the assigned template's own average). Variance
         // measures must not treat these as observations.
         bool substituted = false;
+
+        // THE BEAT AFTER AN ECTOPIC ONE (baseqt_gissipheno.m's beat-after-PVC
+        // rule): the previous beat was marked PVC / PAC / VT or flagged
+        // PREMATURE, and this one is otherwise good -- unmarked, not premature,
+        // not voted. A sinus beat, so it stays in the sinus partition and its RR
+        // stays in the series; but its repolarisation is disturbed by the
+        // preceding compensatory pause, so it is left out of its template's
+        // average (ExcludeReason::POST_ECTOPIC) and so out of QT. Set only when
+        // excludePostEctopic() is on.
+        bool post_ectopic = false;
     };
 
     struct BinCounts {
@@ -383,6 +398,17 @@ namespace tbank {
         // one nobody has asked for yet, or every paint retries the refusal.
         bool built = false;
         bool ok() const { return built && !tmpl.empty(); }
+
+        // ---- WHAT THE BUILD DID TO EACH ROW, for <id>_pulse_moves.csv ----
+        //
+        // Parallel arrays over the cohort rows that were offered (row_ids are
+        // local rows of per_channel_beats["PPG"][bin]); NaN where the re-level
+        // skipped the row. See ppg_realign::RelevelResult for the meaning of
+        // each. Set by every build, cleared by a refused one; NOT serialized.
+        double pct = -1.0;                    // % up the upstroke it levelled at
+        std::vector<uint32_t> row_ids;
+        std::vector<double>   row_anchor_col; // samples, in the beat frame
+        std::vector<double>   row_v_shift;    // amount subtracted from the row
     };
 
     struct template_of_all_signals {

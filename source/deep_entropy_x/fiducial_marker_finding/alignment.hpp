@@ -648,6 +648,15 @@ namespace alignment {
         std::vector<double> tmpl;
         std::vector<double> iqr;
         std::vector<std::vector<double>> beats;
+        // PER-ROW HORIZONTAL SHIFT, parallel to `beats`, in SAMPLES
+        // (sub-sample). Positive moves the beat LATER: a value at column k
+        // lands at k + shift, so the beat's own landmark sat at
+        // (marker - shift) before it was moved. NaN where the row got no
+        // estimate -- its cross-correlation fell below the floor, or the
+        // landmark was not findable on the reference and nothing moved at
+        // all. A row under 1e-3 samples is not resampled but its estimate is
+        // still recorded here.
+        std::vector<double> shifts;
         int q_aligned_col = -1;
         int r_col = -1;
     };
@@ -686,7 +695,14 @@ namespace alignment {
         // on template_bank.hpp. No default -- a silent 0.0 would disable the
         // guard and let every beat through however badly it correlated.
         double corrFloor,
-        const std::vector<char>* exclude_from_median = nullptr)
+        const std::vector<char>* exclude_from_median = nullptr,
+        // THIS LANDMARK'S WINDOW AND REACH, in ms: the template window is
+        // +-halfWinMs about the landmark, and a beat may move at most
+        // +-maxLagMs. See anchor_view::shiftWindow for the per-landmark
+        // values. The defaults are the old single rule (+-30 ms, lag up to the
+        // half-window).
+        double halfWinMs = 30.0,
+        double maxLagMs = -1.0)
     {
         aligned_beats res;
         if (beatsIn.empty()) return res;
@@ -721,6 +737,7 @@ namespace alignment {
 
         std::vector<int> shifts;   // per-beat shift, rounded, for R's new column
         std::vector<double> locatedPos;   // DIAG: raw per-beat located landmark (sub-sample)
+        res.shifts.assign(beats.size(), std::numeric_limits<double>::quiet_NaN());
         if (markerD >= 0.0) {
             const double NaNv = std::numeric_limits<double>::quiet_NaN();
             shifts.reserve(beats.size());
@@ -749,14 +766,19 @@ namespace alignment {
             // morphology. Below it there is NO estimate and the beat is
             // skipped, exactly as a locator returning -1 was skipped.
             const int halfWin = std::max(5,
-                static_cast<int>(std::lround(0.030 * fs)));   // +-30 ms
+                static_cast<int>(std::lround(halfWinMs * 0.001 * fs)));
+            const int maxLag = (maxLagMs > 0.0)
+                ? std::max(1, static_cast<int>(std::lround(maxLagMs * 0.001 * fs)))
+                : 0;   // 0 = xcorrShift's own default, half the window
             const int xlo = static_cast<int>(std::lround(markerD)) - halfWin;
             const int xhi = static_cast<int>(std::lround(markerD)) + halfWin;
             size_t nNoCorr = 0;
             for (size_t i = 0; i < beats.size(); ++i) {
                 const double shiftD = upsample_for_fit::xcorrShift(
-                    beats[i], ref_beat_of_median_length, xlo, xhi, corrFloor);
+                    beats[i], ref_beat_of_median_length, xlo, xhi, corrFloor,
+                    maxLag);
                 if (!std::isfinite(shiftD)) { ++nNoCorr; continue; }
+                res.shifts[i] = shiftD;                   // for the move log
                 locatedPos.push_back(markerD - shiftD);   // DIAG: implied landmark
                 shifts.push_back(static_cast<int>(std::lround(shiftD)));
 
@@ -906,6 +928,22 @@ namespace alignment {
         // slicer is driven by. That is what makes it a shared key rather than
         // just another local index.
         std::vector<uint32_t> original_index;
+
+        // WHERE THIS BEAT'S PEAK AND 50% POINT ARE IN THE SIGNAL, parallel to
+        // `beats`: sample positions in the channel signal passed in, not
+        // columns of the aligned frame. up50_abs is sub-sample (first_crossing,
+        // before the rounding the alignment does); peak_abs is the detector's
+        // whole column. For the transit-time log (ptt_log.hpp), which needs
+        // real times and not frame columns.
+        std::vector<double> peak_abs;
+        std::vector<double> up50_abs;
+        // The other three transit landmarks, same convention (positions in
+        // the channel signal), from pulseLandmarks: the foot, the steepest
+        // point of the upstroke (sub-sample), and the dicrotic notch (NaN
+        // when the beat has none).
+        std::vector<double> foot_abs;
+        std::vector<double> maxup_abs;
+        std::vector<double> notch_abs;
         int    median_length = -1;
         size_t total_beats = 0;
 
@@ -952,12 +990,108 @@ namespace alignment {
         double peak_col_fence_lo = std::numeric_limits<double>::quiet_NaN();
         double peak_col_fence_hi = std::numeric_limits<double>::quiet_NaN();
         int    up50_aligned_col = -1;             // shared column all half-height points land on
+        // WHERE R IS IN THE SHARED FRAME, and it is a fixed column, not a
+        // measurement: the reference (median-RR) beat's own R column, 0.5 of
+        // the median RR in. The frame is built from it outward -- up50 is put
+        // median ptt_t50 after it -- so it is exact by construction. See Pass 1.
+        int    r_aligned_col = -1;
         int    foot_aligned_col = -1;             // feet scatter (per-beat); not a shared column
         int    peak_aligned_col = -1;             // peaks scatter (per-beat); not a shared column
         int    ref_beat_index = -1;
     };
 
-    inline PpgBeatSet extract_ppg_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs)
+    // =========================================================================
+    // ONE BEAT'S PULSE LANDMARKS -- the definitions, for every pulse channel
+    // =========================================================================
+    //
+    // PPG, ABP, ART and ART_PULM all go through extract_ppg_beats_and_align, and
+    // it gets every landmark from HERE, so a transit time on one channel and the
+    // same-named transit time on another are the same measurement on different
+    // signals. Positions are columns of `beat` (one R-pair's slice).
+    //
+    //   systolic peak  the FIRST peak on the upstroke (detect_ppg_upstroke_
+    //                  peak), searched over the pulse window [R + lag,
+    //                  next R + lag]. The window is the only place the
+    //                  channel lag is used: it moves where we look, never a
+    //                  sample.
+    //   foot           the lowest point in the half RR before that peak
+    //                  (trough_in).
+    //   50% point      the first upward crossing of foot + 50% of the rise
+    //                  (first_crossing), sub-sample.
+    //   max upslope    the steepest point between foot and peak
+    //                  (steepest_slope_in), sub-sample.
+    //   dicrotic notch the deepest local minimum after the peak and before the
+    //                  pulse's end (the trough before the next upstroke),
+    //                  skipping the first tenth of that span so the peak's own
+    //                  shoulder is not taken. NaN WHEN THERE IS NONE: a damped
+    //                  pulse with no notch has no notch time, and a fallback
+    //                  position (which detect_ppg_dicrotic returns for the
+    //                  display bar) would be reported as a measurement.
+    //
+    // peak / foot are -1 and the rest NaN when not found; the caller decides
+    // what a missing landmark costs the beat.
+    struct PulseLandmarks {
+        int    peak = -1;
+        int    foot = -1;
+        double up50 = std::numeric_limits<double>::quiet_NaN();
+        double maxUpslope = std::numeric_limits<double>::quiet_NaN();
+        double notch = std::numeric_limits<double>::quiet_NaN();
+    };
+
+    inline PulseLandmarks pulseLandmarks(const std::vector<double>& beat,
+        int rCol, int rr, int lagSamples = 0)
+    {
+        PulseLandmarks L;
+        const int N = static_cast<int>(beat.size());
+        if (N < 4 || rCol < 0 || rr <= 0) return L;
+        const int lo = std::clamp(rCol + 1 + lagSamples, 0, N - 1);
+        const int hi = std::clamp(rCol + rr + lagSamples, 0, N);
+        if (hi - lo < 3) return L;
+
+        L.peak = FeatureMarks::detect_ppg_upstroke_peak(beat, lo, hi);
+        if (L.peak < 0) return L;
+        // Within HALF AN RR before the peak, not from the slice start. The
+        // slice opens half an RR before R, so with a long lag (or a fast
+        // rate) it can hold the PREVIOUS pulse's foot as well as this one's,
+        // and the lowest of the two is as likely to be the wrong one. Half an
+        // RR before the peak still reaches back past any real rise time.
+        L.foot = FeatureMarks::trough_in(beat, std::max(0, L.peak - rr / 2), L.peak);
+        if (L.foot < 0) return L;
+
+        const double u = FeatureMarks::first_crossing(beat, L.foot, L.peak, 0.50);
+        if (u >= 0.0) L.up50 = u;
+        const double m = FeatureMarks::steepest_slope_in(beat, L.foot, L.peak);
+        if (m >= 0.0) L.maxUpslope = m;
+
+        // The pulse's end: the trough before the next upstroke, within one RR
+        // of the peak.
+        const int endHi = std::min(N - 1, L.peak + rr);
+        if (endHi - L.peak > 3) {
+            const int end = FeatureMarks::trough_in(beat, L.peak + 1, endHi);
+            if (end > L.peak + 4) {
+                const int margin = std::max(2, (end - L.peak) / 10);
+                int best = -1; double bestV = std::numeric_limits<double>::infinity();
+                for (int i = L.peak + margin + 1; i < end - 1; ++i) {
+                    const double a = beat[i - 1], b = beat[i], c = beat[i + 1];
+                    if (std::isnan(a) || std::isnan(b) || std::isnan(c)) continue;
+                    if (b <= a && b <= c && b < bestV) { bestV = b; best = i; }
+                }
+                if (best >= 0) L.notch = static_cast<double>(best);
+            }
+        }
+        return L;
+    }
+
+    // lagSamples: the channel's confident ECG-to-channel hardware lag, in this
+    // channel's samples (0 when none), for pulseLandmarks' pulse window.
+    //
+    // rPeaksExact, when given, is rPeaks BEFORE rounding onto this signal's
+    // grid: the ECG R detections converted to this channel's samples as
+    // doubles. It only feeds the transit time Pass 1 anchors on, so that the
+    // R-to-50% distance in the frame is the one <stem>_ptt.csv measures (R on
+    // the ECG clock). Null falls back to the rounded R column.
+    inline PpgBeatSet extract_ppg_beats_and_align(const std::vector<double>& signal, const std::vector<size_t>& rPeaks, double fs,
+        const std::vector<double>* rPeaksExact = nullptr, int lagSamples = 0)
     {
         PpgBeatSet out;
         const int64_t N = static_cast<int64_t>(signal.size());
@@ -966,7 +1100,10 @@ namespace alignment {
         // `r` is the beat's own R column inside `data` -- rr_before_samples of
         // its RR. Carried per beat because it IS per beat; apply_mask moves
         // the whole struct, so it cannot desynchronise from the waveform.
-        struct Raw { std::vector<double> data; int peak; int foot; int up50; int r; };
+        struct Raw {
+            std::vector<double> data; int peak; int foot; int up50; int r;
+            int64_t start; double up50D; double rExact; double maxUp; double notch;
+        };
         std::vector<Raw> raw;
         std::vector<int> rr_lens;
         // R-pair ordinals, parallel to `raw`. See PpgBeatSet::original_index.
@@ -1031,59 +1168,41 @@ namespace alignment {
                 beat[static_cast<size_t>(k - start)] = signal[static_cast<size_t>(k)];
 
             const int r_col = static_cast<int>(before);
-            // Peak search is bounded to THIS beat's own R-R window: from
-            // r_col+1 to the next R (which sits at r_col + rr). The full
-            // beat slice extends past next R (beat length = 1.8*rr, next R
-            // at 1.3*rr), so argmax-over-whole-beat would easily land on
-            // the NEXT beat's peak whenever it's taller. That mislocated
-            // "peak" then anchors up50 detection on the next beat's
-            // upstroke, and up50-alignment then shifts every beat such
-            // that individual beats' data effectively ends at their own
-            // peak in the shared frame -- producing the peak-cutoff
-            // plummet in the displayed template.
-            const int peakSearchEnd = std::min(
-                static_cast<int>(r_col + rr),
-                static_cast<int>(beat.size()));
-            // Upstroke-located FIRST peak, not the tallest sample in the window.
-            // This is the site that matters most: the peak found here brackets
-            // the foot and the up50 half-height crossing below, and a beat whose
-            // up50 cannot be found is DISCARDED. With argmax, a pulse whose
-            // reflected wave exceeds systole had its up50 searched on the
-            // notch-to-P2 rise, which frequently has no clean single crossing --
-            // so those beats were dropped, and the surviving count collapsed.
-            const int peak = FeatureMarks::detect_ppg_upstroke_peak(beat, r_col + 1,
-                peakSearchEnd);
+            // ALL FIVE LANDMARKS FROM pulseLandmarks, the one definition every
+            // pulse channel shares. The peak is the upstroke-located FIRST
+            // peak, searched in this beat's own pulse window [R + lag,
+            // next R + lag]: bounded so it cannot land on the NEXT beat's
+            // pulse (which would anchor up50 on the wrong upstroke and cut the
+            // template off at its own peak), and the reflected wave cannot
+            // stand in for systole. A beat whose peak, foot or 50% point
+            // cannot be found is DISCARDED, and counted.
+            const PulseLandmarks L = pulseLandmarks(beat, r_col,
+                static_cast<int>(rr), lagSamples);
+            const int peak = L.peak;
             if (peak < 0) { ++out.n_dropped_peak; continue; }
-
-            // Foot and up50 through the SAME primitives the display fiducials
-            // use (FeatureMarks::trough_in / amplitude_crossing), so the
-            // alignment axis and the markers drawn on it are defined
-            // identically. Both were hand-rolled here, which is why a fix to
-            // one never reached the other.
-            const int foot = FeatureMarks::trough_in(beat, 0, peak);
+            const int foot = L.foot;
             if (foot < 0) { ++out.n_dropped_foot; continue; }
-
-            // 50%-upslope (half-height) crossing on [foot, peak]. This is the
-            // horizontal alignment fiducial: it sits on the steep upstroke, so
-            // its column is well-localized (unlike the flat apex or the shallow
-            // foot). Interpolated first-upward-crossing, and it can FAIL --
-            // both properties matter here and neither is provided by
-            // amplitude_crossing, which is for display markers.
-            // first_crossing returns a sub-sample crossing now; the up50 axis
-            // is integer-column, so it rounds here.
-            const double up50D = FeatureMarks::first_crossing(beat, foot, peak, 0.50);
+            // The 50% point is the horizontal alignment fiducial: on the steep
+            // upstroke, so well-localized, and it can FAIL. Sub-sample; the
+            // up50 axis is integer-column, so it rounds here.
+            const double up50D = std::isfinite(L.up50) ? L.up50 : -1.0;
             const int up50 = (up50D >= 0.0)
                 ? static_cast<int>(std::lround(up50D)) : -1;
             if (up50 < 0) { ++out.n_dropped_up50; continue; }   // no upslope
 
-            // NOTE: peak/foot are stored raw (no subsample_refine call) --
-            // they only feed the peak-position rejection check below and
-            // the (unread by any caller) peak_cols/foot_cols output,
-            // neither of which needs sub-sample precision. The expensive
-            // 4x-upsample fit-and-select refinement was pure overhead here;
-            // the real fiducials used downstream (outPeakCol/outFootCol)
-            // are recomputed independently from the final median template.
-            raw.push_back({ std::move(beat), peak, foot, up50, r_col });
+            // NOTE: peak/foot are whole columns (no subsample_refine call):
+            // the 4x-upsample fit-and-select refinement was pure overhead for
+            // what they feed here, and the template's own fiducials are
+            // recomputed from the median. The transit times use them as
+            // detected; ptt_peak and ptt_foot are therefore resolved to one
+            // sample, the 50% point and max upslope to a fraction of one.
+            // R in slice coordinates, sub-sample when the exact detection is
+            // known -- for the transit time only; `r` stays the whole column.
+            const double rExact = (rPeaksExact && i < rPeaksExact->size())
+                ? (*rPeaksExact)[i] - static_cast<double>(start)
+                : static_cast<double>(r_col);
+            raw.push_back({ std::move(beat), peak, foot, up50, r_col, start, up50D, rExact,
+                L.maxUpslope, L.notch });
             rr_lens.push_back(static_cast<int>(rr));
             // Pushed HERE, in the same statement group as the beat itself, and
             // after every `continue` above. A beat and its ordinal have to be
@@ -1108,15 +1227,39 @@ namespace alignment {
             }
         }
 
-        // ---- Pass 1: 50%-upslope align on a shared axis (shift + NaN) ---
-        // Anchor every beat's half-height point to the MEDIAN up50 column
-        // among survivors. Beats with up50 > anchor get their leading samples
-        // clipped (dst < 0 dropped by the guard below); this is accepted.
-        std::vector<int> up50s;
-        up50s.reserve(raw.size());
-        for (const auto& r : raw) up50s.push_back(r.up50);
-        std::sort(up50s.begin(), up50s.end());
-        const int up50_anchor = up50s[up50s.size() / 2];   // median
+        // ---- Pass 1: 50%-upslope align, R-relative (shift + NaN) --------
+        //
+        // R FIRST, THEN THE 50% POINT RELATIVE TO IT. R's column in the frame
+        // is fixed: the reference (median-RR) beat's own R column, 0.5 of the
+        // median RR in -- where R sits on an ordinary beat of this bin. The
+        // shared 50% column is then placed the MEDIAN R-TO-50% TRANSIT TIME
+        // (ptt_t50) after it, and every beat is shifted so its own 50% point
+        // lands there. So on the template R is where it always is, and the
+        // 50% alignment sits exactly one median ptt_t50 after it.
+        //
+        // WHAT THIS REPLACED: the anchor was the median of every beat's 50%
+        // column in its own slice. A slice starts 0.5 of ITS OWN RR before its
+        // R, so that column is 0.5*RR_k + ptt_k -- heart rate and transit time
+        // mixed together -- and R then landed wherever the median of the
+        // shifted R columns fell. The frame had no fixed point.
+        //
+        // OVER EVERY MEASURED BEAT, before the pulse QC filter, because the
+        // filter scores the aligned beats and so has to run after this. The
+        // shifts stay whole samples, so each beat's 50% point is within half a
+        // sample of the column, as before. A beat whose 50% point is later
+        // than the column still loses its leading samples off the left edge.
+        const int r_anchor = static_cast<int>(rr_before_samples(out.median_length));
+        double medPtt = 0.0;
+        {
+            std::vector<double> tt;
+            tt.reserve(raw.size());
+            for (const auto& r : raw) tt.push_back(r.up50D - r.rExact);
+            std::sort(tt.begin(), tt.end());
+            const size_t m = tt.size() / 2;
+            medPtt = (tt.size() % 2) ? tt[m] : 0.5 * (tt[m - 1] + tt[m]);
+        }
+        const int up50_anchor = r_anchor + static_cast<int>(std::lround(medPtt));
+        if (up50_anchor < 0) return out;
 
         int max_tail = 0;         // max (beat_len - up50) over survivors
         for (const auto& r : raw) {
@@ -1132,9 +1275,19 @@ namespace alignment {
         out.foot_cols.reserve(raw.size());
         out.r_cols.reserve(raw.size());
         out.original_index.reserve(raw.size());
+        out.peak_abs.reserve(raw.size());
+        out.up50_abs.reserve(raw.size());
+        out.foot_abs.reserve(raw.size());
+        out.maxup_abs.reserve(raw.size());
+        out.notch_abs.reserve(raw.size());
         for (size_t ri = 0; ri < raw.size(); ++ri) {
             const auto& b = raw[ri];
             if (ri < raw_slice.size()) out.original_index.push_back(raw_slice[ri]);
+            out.peak_abs.push_back(static_cast<double>(b.start + b.peak));
+            out.up50_abs.push_back(static_cast<double>(b.start) + b.up50D);
+            out.foot_abs.push_back(static_cast<double>(b.start + b.foot));
+            out.maxup_abs.push_back(static_cast<double>(b.start) + b.maxUp);   // NaN stays NaN
+            out.notch_abs.push_back(static_cast<double>(b.start) + b.notch);
             const int prepend = up50_anchor - b.up50;   // may be < 0 now
             std::vector<double> a(shared_w, NaND);
             for (int k = 0; k < (int)b.data.size(); ++k) {
@@ -1149,6 +1302,7 @@ namespace alignment {
             out.r_cols.push_back(prepend + b.r);
         }
         out.up50_aligned_col = up50_anchor;
+        out.r_aligned_col = r_anchor;
 
 
         out.total_beats = out.beats.size();

@@ -90,14 +90,24 @@ namespace premark {
         const double q_onset = FeatureMarks::find_q_onset(tmpl, fs, rCol, sgn);
         const double j_point = FeatureMarks::find_j_point(tmpl, fs, rCol, sgn);
         const double t_end = FeatureMarks::find_t_end(tmpl, fs, rCol, j_point);
+        // T ONSET, bracketed by the J point and T end just found. It was never
+        // detected -- s.tBegin stayed -1 and the clamp below turned that into
+        // qrsEnd, so ST = [qrsEnd, qrsEnd) was always empty and the T band
+        // started at J and swallowed the ST segment.
+        const double t_begin = FeatureMarks::find_t_begin(tmpl, fs, j_point, t_end);
         const int    pEnd = FeatureMarks::find_p_end(tmpl, rCol, fs, sgn);
 
         s.qrsStart = (q_onset >= 0.0) ? (int)std::lround(q_onset) : -1;
         s.qrsEnd = (j_point >= 0.0) ? (int)std::lround(j_point) : -1;
         s.tEnd = (t_end >= 0.0) ? (int)std::lround(t_end) : -1;
+        s.tBegin = (t_begin >= 0.0) ? (int)std::lround(t_begin) : -1;
 
+        // Still clamped into [qrsEnd, tEnd], which is what valid() requires.
+        // A T onset that could not be found (-1) falls back to qrsEnd -- the
+        // old behaviour, an empty ST band -- rather than costing the bin.
         if (s.qrsEnd >= 0 && s.tEnd >= 0)
-            s.tBegin = std::max(s.qrsEnd, std::min(s.tBegin, s.tEnd));
+            s.tBegin = (s.tBegin < 0) ? s.qrsEnd
+            : std::max(s.qrsEnd, std::min(s.tBegin, s.tEnd));
         s.pEnd = (pEnd >= 0) ? pEnd : s.qrsStart;
         // ...and CLAMP to the QRS onset even when detection "succeeded".
         // detect_p_end's last resort returns p_peak + 59 samples when the

@@ -43,6 +43,7 @@ namespace analysis_job {
         case AnchorType::Q_ONSET: return "Q_ONSET";
         case AnchorType::R_PEAK:  return "R_PEAK";
         case AnchorType::J_POINT: return "J_POINT";
+        case AnchorType::T_END:   return "T_END";
         }
         return "?";
     }
@@ -104,7 +105,7 @@ namespace analysis_job {
         AnnealedData annealedData = read_input_binfile(annealedPath.string());
 
 
-        channel_offset::set(cfg.quality_metric, stem);
+        channel_offset::set(cfg.training_log, stem);
         channel_offset::Result chOffPpg, chOffArt;
         const bool wantChannelOffset = (cfg.dataset_type == "CHAOS");
         if (wantChannelOffset) {
@@ -159,32 +160,35 @@ namespace analysis_job {
                     << std::chrono::duration_cast<std::chrono::milliseconds>(_cot1 - _cot0).count()
                     << " ms\n";
             }
-            channel_offset::apply(annealedData.bins,
-                chOffPpg, cfg.ppg_upsample_rate,
-                chOffArt, cfg.abp_upsample_rate,
-                cfg.art_upsample_rate, cfg.art_pulm_upsample_rate);
+            // MEASURED, NOT APPLIED. The signals stay as recorded; see
+            // channel_offset.hpp. A confident lag moves the pulse window (via
+            // job.rates, below) and the viewer's display, nothing else.
             channel_offset::write_log(chOffPpg, "PPG", /*append=*/false);
             channel_offset::write_log(chOffArt, "ARTERIAL", /*append=*/true);
 
-            if (chOffPpg.ambiguous) {
-                std::cerr << "  [channel_offset] " << stem
-                    << ": ambiguous, PPG NOT shifted (ratio=" << chOffPpg.ratio
-                    << ", lag would have been " << chOffPpg.lag_ms << " ms)\n";
-            }
-            else {
-                std::cerr << "  [channel_offset] " << stem << ": PPG shifted "
-                    << chOffPpg.lag_ms << " ms (ratio=" << chOffPpg.ratio << ")\n";
-            }
-            if (chOffArt.ambiguous) {
-                std::cerr << "  [channel_offset] " << stem
-                    << ": ambiguous, ABP/ART/ART_PULM NOT shifted (ratio=" << chOffArt.ratio
-                    << ", lag would have been " << chOffArt.lag_ms << " ms)\n";
-            }
-            else {
-                std::cerr << "  [channel_offset] " << stem << ": ABP/ART/ART_PULM shifted "
-                    << chOffArt.lag_ms << " ms (ratio=" << chOffArt.ratio << ")\n";
-            }
+            auto say = [&](const char* group, const channel_offset::Result& r) {
+                std::cerr << "  [channel_offset] " << stem << ": " << group
+                    << " lag " << r.lag_ms << " ms (ratio=" << r.ratio << ") -- "
+                    << (r.ambiguous ? "ambiguous, not used"
+                        : "used for the pulse window and display; signals not shifted")
+                    << "\n";
+                };
+            say("PPG", chOffPpg);
+            say("ABP/ART/ART_PULM", chOffArt);
         }
+
+        // ---- THE RECORD'S LAGS ------------------------------------------
+        // Measured for CHAOS only; a group with no data is "not measured",
+        // which is method NONE, not a lag of 0 ms.
+        channel_offset::RecordLag recordLag;
+        if (wantChannelOffset) {
+            recordLag.ppg = channel_offset::fromResult(chOffPpg,
+                chOffPpg.n_r_peaks >= 2 && chOffPpg.n_feet >= 2);
+            recordLag.arterial = channel_offset::fromResult(chOffArt,
+                chOffArt.n_r_peaks >= 2 && chOffArt.n_feet >= 2);
+        }
+        job.rates.ppg_lag_ms = recordLag.ppg.usableLagMs();
+        job.rates.arterial_lag_ms = recordLag.arterial.usableLagMs();
 
         // Grab arterial pass-through slots BEFORE the move consumes the bins.
         // Slots match file_to_bin / gui_handler: CH_ABP=33, CH_ART=34, CH_ART_PULM=35.
@@ -208,8 +212,12 @@ namespace analysis_job {
         }
 
         std::cerr << "  Processing Raw Templates (fast stage): " << stem << "\n";
-        ecg_move_log::set(cfg.quality_metric, stem);   // per-beat vertical move log
+        ecg_move_log::set(cfg.training_log, stem);   // per-beat vertical + horizontal move log
+        ptt_log::set(cfg.training_log, stem);        // per-beat R->PPG transit times
         templates_io::set(cfg.template_path, stem);
+        // AFTER set(), which clears it: the archive this build writes carries
+        // this record's lags as a trailer.
+        templates_io::setRecordLag(recordLag);
         tbank::setMinBeats(cfg.min_beats_template_ecg, cfg.min_beats_template_ppg);//min beats for displayed templates in the viewer loaded from config
 
         // MORPHOLOGY SPLIT THRESHOLDS, ONE SIDE AT A TIME. This was a single
@@ -222,6 +230,12 @@ namespace analysis_job {
         // A BLANK CELL IS 0.0 AND IS REFUSED, which is the intended outcome:
         // 0.0 is not "no threshold", it is a threshold every beat clears, and
         // accepting it would disable the split while looking configured.
+        tbank::setExcludePostEctopic(cfg.exclude_beat_after_ectopic);
+        std::cerr << "  [post-ectopic] beat after a PVC/PAC/VT or premature beat: "
+            << (cfg.exclude_beat_after_ectopic
+                ? "kept in the sinus partition and RR, left out of the average and QT"
+                : "treated as an ordinary beat")
+            << " (exclude_beat_after_ectopic)\n";
         if (!tbank::setMorphThresholdEcg(cfg.morph_threshold_ecg)) {
             std::cerr << "  [morphology] morph_threshold_ecg="
                 << cfg.morph_threshold_ecg << " not usable (need (0, 1]); "
@@ -265,23 +279,22 @@ namespace analysis_job {
         const std::filesystem::path splitPath = std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
         bank_reload::SplitArchive priorSplit = bank_reload::readSplit(splitPath.string());
 
-        FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates, noise_bin_path.string());
+        // The prior split is applied INSIDE the build, before the archive is
+        // rewritten -- see bank_reload.hpp for the two gates and why.
+        FastTemplateBuild fast = buildTemplatesAndBeatsFast(job.peakResults, job.rates, noise_bin_path.string(), &priorSplit);
         if (fast.tmpl.bins.empty()) {
             std::cerr << "  no bins for " << stem << " (recording shorter than one bin?); skipping.\n";
             return std::nullopt;
         }
         job.tmpl = std::move(fast.tmpl);
+        job.tmpl.lag = recordLag;   // for the viewer: display and the markings file
         job.beats = std::move(fast.beats);
         job.info = std::move(fast.info);
 
-        // AFTER the fresh build, because it overwrites what that build
-        // partitioned; BEFORE the r_aligned_template snapshot, so the R frame
-        // every anchor aligns from carries the reloaded banks.
-        {
-            const bank_reload::SplitReport rep =
-                bank_reload::applySplit(priorSplit, job.tmpl);
-            bank_reload::printReport(rep);
-        }
+        // Applied inside the build above; reported here. The reloaded banks
+        // are already in job.tmpl, so the r_aligned_template snapshot below,
+        // which every anchor aligns from, carries them.
+        bank_reload::printReport(priorSplit.rep);
 
         job.r_aligned_template = job.tmpl;      // snapshot R frame (one copy, at prep time)
 
@@ -305,6 +318,13 @@ namespace analysis_job {
             if (bit != atmpl.bank_anchors.end())
                 job.tmpl.bank_anchors[tag] = std::move(bit->second);
         }
+
+        // <stem>_beat_moves.csv, now that both halves exist: the vertical
+        // shifts the fast build stashed, and every anchor's horizontal ones.
+        ecg_move_log::write(job.rates.ecg);
+        // Every pulse channel's transit times, stashed by the build.
+        ptt_log::writeTransit();
+
         std::cerr.flush();
         return job;
     }
@@ -339,7 +359,7 @@ namespace analysis_job {
             write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID, job.samplingRate);
 
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
-            premark::runAll(job.beats, job.tmpl, job.rates.ecg, pol, job.cfg.quality_metric, job.stem);
+            premark::runAll(job.beats, job.tmpl, job.rates.ecg, pol, job.cfg.training_log, job.stem);
             writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK", job.tmpl, job.beats, job.samplingRate, pol);
         }
         catch (const std::exception& e) {

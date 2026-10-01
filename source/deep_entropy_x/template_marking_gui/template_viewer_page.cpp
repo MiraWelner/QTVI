@@ -327,11 +327,11 @@ bool TemplateViewerWindow::unionEcgFrameSeconds(const time_bin& b, int lead,
     // seconds by (col - rPeak) / fs with one shared rPeak and rate.
     const double rPeak = static_cast<double>(b.r_peak_ch[lead]);
 
-    // The same four alignments the ring walks. Kept local so this does not
+    // The same five alignments the ring walks. Kept local so this does not
     // depend on the anonymous-namespace kAlignRing defined further down.
-    static const AnchorType kFour[4] = {
+    static const AnchorType kFour[5] = {
         AnchorType::P_ONSET, AnchorType::Q_ONSET,
-        AnchorType::R_PEAK,  AnchorType::J_POINT,
+        AnchorType::R_PEAK,  AnchorType::J_POINT, AnchorType::T_END,
     };
 
     int loCol = std::numeric_limits<int>::max();
@@ -695,10 +695,21 @@ void TemplateViewerWindow::showPage() {
             // A -1 here (build could not measure one) leaves that channel off
             // the time axis and undrawn, which is deliberate: the alternative
             // is the assumed column that put every pulse at the wrong time.
-            pw->setPulseAnchor(BinPlotWidget::Channel::Ppg, b.ppg_r_construct);
-            pw->setPulseAnchor(BinPlotWidget::Channel::Abp, b.abp_r_construct);
-            pw->setPulseAnchor(BinPlotWidget::Channel::Art, b.art_r_construct);
-            pw->setPulseAnchor(BinPlotWidget::Channel::ArtPulm, b.art_pulm_r_construct);
+            //
+            // THE ECG IS DRAWN LATER BY THE HARDWARE LAG, when one was measured
+            // with confidence (CHAOS), so it lines up with the pulse it caused.
+            // The pulse channels stay as recorded, except a group whose lag
+            // differs from the one the ECG was shifted by (pulseDisplayAnchor).
+            // Display only: every column, bar and value written is unshifted.
+            pw->setEcgDisplayShift(ecgDisplayShiftMs() * 0.001);
+            pw->setPulseAnchor(BinPlotWidget::Channel::Ppg,
+                pulseDisplayAnchor(b.ppg_r_construct, false, m_ppgRateHz));
+            pw->setPulseAnchor(BinPlotWidget::Channel::Abp,
+                pulseDisplayAnchor(b.abp_r_construct, true, m_abpRateHz));
+            pw->setPulseAnchor(BinPlotWidget::Channel::Art,
+                pulseDisplayAnchor(b.art_r_construct, true, m_artRateHz));
+            pw->setPulseAnchor(BinPlotWidget::Channel::ArtPulm,
+                pulseDisplayAnchor(b.art_pulm_r_construct, true, m_artPulmRateHz));
 
             static const std::vector<double> empty;
             const auto& ecg = leads[li].ecg ? *leads[li].ecg : empty;

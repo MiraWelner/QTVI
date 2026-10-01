@@ -24,7 +24,7 @@
 // populated under another. That is a deliberate, bounded compromise -- re-
 // filtering would change group membership, which changes the morphology split,
 // which is the pipeline's decision -- and it is why the status line says the
-// bin was re-stacked and m_ppgRealigned remembers which ones.
+// template was re-stacked and m_ppgRealigned remembers which ones.
 //
 // One of six units; TemplateViewerWindow is declared in template_viewer.hpp.
 // ========================================================================
@@ -485,6 +485,10 @@ bool TemplateViewerWindow::buildPulseVariant(int binIdx, int templateIdx,
         out.built = true;
         out.tmpl.clear();
         out.tmpl_iqr.clear();
+        out.pct = usePct;
+        out.row_ids.clear();
+        out.row_anchor_col.clear();
+        out.row_v_shift.clear();
         return false;
     }
 
@@ -494,7 +498,13 @@ bool TemplateViewerWindow::buildPulseVariant(int binIdx, int templateIdx,
     // same instant in each -- which is the property that lets a foot read off
     // Foot sit on the same axis as a notch read off Peak.
     out.tmpl = res.tmpl;
-    out.tmpl_iqr = res.std;
+    out.tmpl_iqr = res.iqr;
+    // Per row, for the move log. Parallel to beats.ids, which is the cohort
+    // minus stale indices.
+    out.pct = usePct;
+    out.row_ids = beats.ids;
+    out.row_anchor_col = res.row_anchor_col;
+    out.row_v_shift = res.row_v_shift;
     const std::size_t keep = slot.tmpl.size();
     if (keep > 0 && out.tmpl.size() > keep) {
         out.tmpl.resize(keep);

@@ -12,6 +12,7 @@
 #include <array>
 #include <vector>
 #include "bank_structs.hpp"
+#include "peak_finding/channel_offset.hpp"   // RecordLag; standard headers only, safe this early
 namespace template_structs {
 
     struct ChannelMethodTemplate {
@@ -72,6 +73,10 @@ namespace template_structs {
 
     struct TemplateFile {
         std::vector<BinTemplates> bins;
+        // The record's measured ECG-to-pulse lags (channel_offset). Measured
+        // once per record and never applied to a signal; carried here so the
+        // viewer can use it for display and write it into the markings file.
+        channel_offset::RecordLag lag;
         std::map<int, std::vector<std::array<ChannelMethodTemplate, 3>>> raw_anchors;
         // Indexing: bank_anchors[anchorTag][bin][channel][slot].
         struct BankSlotTemplate {

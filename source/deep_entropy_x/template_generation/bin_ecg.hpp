@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cstdio>
 #include <atomic>
+#include <deque>
 #include <fstream>
 #include <string>
 #include <limits>
@@ -48,6 +49,7 @@ struct EcgChannelResult {
     std::vector<uint8_t> seed_basis_raw;
     std::vector<std::vector<double>> tp_shift_raw;
     std::vector<std::vector<double>> pq_shift_raw;
+    std::vector<std::vector<int>> kept_of_aligned_raw;   // for the move log
 };
 
 struct EcgTemplateResult {
@@ -56,32 +58,140 @@ struct EcgTemplateResult {
     EcgChannelResult ch3;
     std::array<std::vector<std::vector<size_t>>, 3> kept_index;
 };
-// Beat-move log destination. Set once from main/post_process before the build
-// (read-only afterwards, and the writer runs single-threaded post-loop, so no
-// race). Empty dir/stem => no log.
+// ---- THE PER-BEAT MOVE LOG: <stem>_beat_moves.csv ---------------------------
+//
+// One row per ECG beat the raw method sliced, per channel per bin, with every
+// move the build made to it:
+//
+//   tp_mv_shift, pq_mv_shift   VERTICAL. The two-stage leveling in
+//                              extract_beats_and_align: the amount SUBTRACTED
+//                              from the beat by the TP pass and by the PQ pass.
+//                              NaN where that pass did not apply.
+//   kept_row                   The beat's row in per_channel_beats[ch][bin] --
+//                              the local row space bank members index. -1 for
+//                              a beat the raw method did not keep (baseline
+//                              NONE), which therefore took part in no anchor
+//                              alignment.
+//   <A>_ms_shift               HORIZONTAL, one column per anchor alignment
+//                              (r, p, q, j): the sub-sample cross-correlation
+//                              shift align_beat_matrix applied to this beat to
+//                              put its own landmark on the template's, in ms.
+//                              POSITIVE MOVES THE BEAT LATER. NaN where the
+//                              beat got no estimate (below the correlation
+//                              floor, or the landmark was not found on the
+//                              template so nothing in that bin moved).
+//
+// TWO STAGES, ONE WRITE. The vertical shifts exist at the end of the fast
+// build (CreateEcgTemplatesFast) and the horizontal ones only after
+// analysis_job::prepare has run every anchor (alignTemplatesFromCache), so the
+// build STASHES its half here and prepare calls write() once both are in.
+// set() clears both halves, so a record can never be written with the previous
+// record's numbers.
+//
+// Destination set once per record from prepare before the build. Empty
+// dir/stem => no log. stash_vertical and horizontal_bins are called
+// single-threaded; the pointer horizontal_bins returns is written from the
+// parallel bin loop, one (bin, channel) element per iteration, which is
+// race-free because it is sized before the loop starts.
 namespace ecg_move_log {
     inline std::string g_dir;
     inline std::string g_stem;
-    inline void set(const std::string& dir, const std::string& stem) { g_dir = dir; g_stem = stem; }
 
-    // Write one channel's per-bin/per-beat two-stage vertical shifts. Called
-    // single-threaded (after the parallel build loop). `first` truncates +
-    // writes the header; later channels append.
-    inline void write_channel(const char* channel,
-        const std::vector<std::vector<double>>& tp,
-        const std::vector<std::vector<double>>& pq, bool first) {
-        if (g_dir.empty() || g_stem.empty()) return;
-        std::ofstream f(g_dir + "/" + g_stem + "_beat_moves.csv",
-            first ? std::ios::trunc : std::ios::app);
-        if (!f) return;
-        if (first) f << "stem,channel,bin,beat,tp_mv_shift,pq_mv_shift\n";
-        for (size_t b = 0; b < tp.size(); ++b)
-            for (size_t k = 0; k < tp[b].size(); ++k) {
-                const double pqv = (b < pq.size() && k < pq[b].size())
-                    ? pq[b][k] : std::numeric_limits<double>::quiet_NaN();
-                f << g_stem << ',' << channel << ',' << b << ',' << k
-                    << ',' << tp[b][k] << ',' << pqv << '\n';
+    // [bin] -> this channel's per-aligned-beat vertical shifts and the kept
+    // row each aligned beat became.
+    struct VerticalBin {
+        std::vector<double> tp;
+        std::vector<double> pq;
+        std::vector<int>    kept_row;
+    };
+    inline std::array<std::vector<VerticalBin>, 3> g_vertical;
+
+    // One anchor's shifts, [bin][channel][kept_row], in samples. A deque so a
+    // pointer handed out for one anchor survives the next anchor being added.
+    struct HorizontalAnchor {
+        std::string label;
+        std::vector<std::array<std::vector<double>, 3>> bins;
+    };
+    inline std::deque<HorizontalAnchor> g_horizontal;
+
+    inline void reset() {
+        for (auto& v : g_vertical) v.clear();
+        g_horizontal.clear();
+    }
+    inline void set(const std::string& dir, const std::string& stem) {
+        g_dir = dir; g_stem = stem; reset();
+    }
+
+    // The fast build's half. Per bin: tp/pq parallel to the aligned beats,
+    // and kept_row mapping each aligned beat to its kept row (or -1).
+    inline void stash_vertical(int chIdx,
+        std::vector<std::vector<double>> tp,
+        std::vector<std::vector<double>> pq,
+        std::vector<std::vector<int>> kept_row)
+    {
+        if (chIdx < 0 || chIdx >= 3) return;
+        const size_t n = tp.size();
+        std::vector<VerticalBin>& dst = g_vertical[chIdx];
+        dst.assign(n, {});
+        for (size_t b = 0; b < n; ++b) {
+            dst[b].tp = std::move(tp[b]);
+            if (b < pq.size())       dst[b].pq = std::move(pq[b]);
+            if (b < kept_row.size()) dst[b].kept_row = std::move(kept_row[b]);
+        }
+    }
+
+    // One anchor's store, sized to nBins. Call once per anchor BEFORE the
+    // parallel bin loop; write (*out)[bin][chIdx] = shifts inside it.
+    inline std::vector<std::array<std::vector<double>, 3>>*
+        horizontal_bins(const std::string& label, size_t nBins)
+    {
+        for (HorizontalAnchor& h : g_horizontal)
+            if (h.label == label) {
+                h.bins.assign(nBins, {});
+                return &h.bins;
             }
+        g_horizontal.push_back(HorizontalAnchor{ label, {} });
+        g_horizontal.back().bins.assign(nBins, {});
+        return &g_horizontal.back().bins;
+    }
+
+    // Both halves, one file. fs is the ECG rate the horizontal shifts are
+    // converted to ms with. Clears the store afterwards.
+    inline void write(double fs) {
+        if (g_dir.empty() || g_stem.empty()) { reset(); return; }
+        std::ofstream f(g_dir + "/" + g_stem + "_ecg_alignment_shifts.csv", std::ios::trunc);
+        if (!f) { reset(); return; }
+        const double kNaN = std::numeric_limits<double>::quiet_NaN();
+        const double msPerSample = (fs > 0.0) ? 1000.0 / fs : kNaN;
+
+        f << "stem,channel,bin,beat,tp_mv_shift,pq_mv_shift,kept_row";
+        for (const HorizontalAnchor& h : g_horizontal) f << ',' << h.label << "_ms_shift";
+        f << '\n';
+
+        static const char* kChan[3] = { "CH1", "CH2", "CH3" };
+        for (int c = 0; c < 3; ++c) {
+            const std::vector<VerticalBin>& bins = g_vertical[c];
+            for (size_t b = 0; b < bins.size(); ++b) {
+                const VerticalBin& vb = bins[b];
+                for (size_t k = 0; k < vb.tp.size(); ++k) {
+                    const double pqv = (k < vb.pq.size()) ? vb.pq[k] : kNaN;
+                    const int kr = (k < vb.kept_row.size()) ? vb.kept_row[k] : -1;
+                    f << g_stem << ',' << kChan[c] << ',' << b << ',' << k
+                        << ',' << vb.tp[k] << ',' << pqv << ',' << kr;
+                    for (const HorizontalAnchor& h : g_horizontal) {
+                        double v = kNaN;
+                        if (kr >= 0 && b < h.bins.size()) {
+                            const std::vector<double>& row = h.bins[b][c];
+                            if (static_cast<size_t>(kr) < row.size())
+                                v = row[static_cast<size_t>(kr)] * msPerSample;
+                        }
+                        f << ',' << v;
+                    }
+                    f << '\n';
+                }
+            }
+        }
+        reset();
     }
 }
 
@@ -106,6 +216,10 @@ struct SingleMethodResult {
     // two-stage leveling, surfaced for the move log.
     vector<double> tp_shift;
     vector<double> pq_shift;
+    // Parallel to tp_shift / pq_shift (the ALIGNED beats): the kept row each
+    // aligned beat became, or -1 for one excluded from `usable`. The move log
+    // joins the anchor alignments' per-row shifts through it.
+    std::vector<int> kept_of_aligned;
 
 
 
@@ -290,6 +404,10 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
         out_kept_beats->reserve(usable.size());
         for (const auto* sl : usable) out_kept_beats->push_back(*sl);
     }
+    res.kept_of_aligned.assign(aligned.beats.size(), -1);
+    for (size_t k = 0; k < usableIdx.size(); ++k)
+        if (usableIdx[k] < res.kept_of_aligned.size())
+            res.kept_of_aligned[usableIdx[k]] = static_cast<int>(k);
     res.kept_idx.resize(usableIdx.size());
     for (size_t k = 0; k < usableIdx.size(); ++k) {
         const size_t ai = usableIdx[k];
@@ -354,6 +472,7 @@ static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
     cr.seed_basis_raw.assign(n, static_cast<uint8_t>(seed_pool::SeedBasis::EMPTY));
     cr.tp_shift_raw.resize(n);
     cr.pq_shift_raw.resize(n);
+    cr.kept_of_aligned_raw.resize(n);
 }
 
 /**
@@ -418,6 +537,7 @@ static inline void process_channel_fast(
     if (i < cr.tp_shift_raw.size()) {
         cr.tp_shift_raw[i] = std::move(raw_res.tp_shift);   // distinct i -> race-free
         cr.pq_shift_raw[i] = std::move(raw_res.pq_shift);
+        cr.kept_of_aligned_raw[i] = std::move(raw_res.kept_of_aligned);
     }
 
     // Method 4: unfiltered (original ECG signal + master R-peaks). No std.
@@ -518,9 +638,12 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
                 &keptIdx[2][i]);
     }
 
-    ecg_move_log::write_channel("CH1", res.ch1.tp_shift_raw, res.ch1.pq_shift_raw, /*first=*/true);
-    ecg_move_log::write_channel("CH2", res.ch2.tp_shift_raw, res.ch2.pq_shift_raw, /*first=*/false);
-    ecg_move_log::write_channel("CH3", res.ch3.tp_shift_raw, res.ch3.pq_shift_raw, /*first=*/false);
+    // STASHED, NOT WRITTEN: the horizontal half of the move log does not exist
+    // until prepare has run every anchor. See ecg_move_log. Copied, because
+    // res is returned with these fields and nothing says no one reads them.
+    ecg_move_log::stash_vertical(0, res.ch1.tp_shift_raw, res.ch1.pq_shift_raw, res.ch1.kept_of_aligned_raw);
+    ecg_move_log::stash_vertical(1, res.ch2.tp_shift_raw, res.ch2.pq_shift_raw, res.ch2.kept_of_aligned_raw);
+    ecg_move_log::stash_vertical(2, res.ch3.tp_shift_raw, res.ch3.pq_shift_raw, res.ch3.kept_of_aligned_raw);
 
     // The join key, surfaced so the partition and the archive read the SAME map
     // rather than two copies that can drift. Moved, not copied: keptIdx dies

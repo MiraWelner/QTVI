@@ -43,6 +43,42 @@
 // mV^2 per projection plane; velocity is mV/s; angles are degrees; the
 // planarity and variability ratios are dimensionless.
 //
+// ---------------------------------------------------------------------------
+// THE BASIS IS RECORD-LOCAL, AND THE CSV SAYS SO
+// ---------------------------------------------------------------------------
+// The save path (analyzeBinWithBasis) projects every bin onto ONE SVD basis
+// built from this record's own templates (buildRecordBasis). Its axes are
+// PC1/PC2/PC3 of THIS record: not Frank X/Y/Z, and not the same directions in
+// the next record. So:
+//
+//   comparable across bins of one record   every plane area, the QRS-T angle
+//   comparable across records              only the rotation-invariant
+//                                          features: the QRS-T angle, the
+//                                          lambdas and planarity, peak spatial
+//                                          velocity and loop variability
+//   NOT comparable across records          the per-plane areas (xy/xz/yz are
+//                                          PC1-PC2, PC1-PC3, PC2-PC3 here)
+//
+// Every row carries basis = record_local_svd and the basis's rank and lead
+// signs, and the basis itself is written to <id>_vcg_template_basis.csv.
+//
+// TWO CHECKS DECIDE WHAT THE BASIS CAN SUPPORT, both run before it is built:
+//
+//   INVERSION. vcg::checkLimbLeadPolarity tests Einthoven's law (II = I + III)
+//   under all eight sign combinations. When the leads are consistent with
+//   limb leads, the winning signs are applied to the leads before the basis
+//   sees them, exactly as the noise-marking VCG does -- one inverted lead
+//   otherwise rotates the whole loop.
+//
+//   RANK. Limb leads obey II = I + III exactly, so three limb leads span only
+//   TWO dimensions: the frontal plane. A third "axis" is then noise, and every
+//   quantity measured along it -- the two out-of-plane areas, lambda3, the
+//   out-of-plane planarity -- is a measurement of noise that looks like a
+//   measurement of the heart. So the rank is 2 when the leads pass the limb-
+//   lead test, or when sigma3/sigma1 is below kRankFloor; the loop is then
+//   held in the PC1-PC2 plane (PC3 set to 0) and those quantities are left
+//   empty. Rank 1 (a line) supports no loop at all.
+//
 
 #include "noise_marking_gui/vcg.hpp"
 #include "global_intervals.hpp"
@@ -258,6 +294,141 @@ namespace vcg_avg {
     }
 
     // -----------------------------------------------------------------------
+    // The record-local basis (see the header)
+    // -----------------------------------------------------------------------
+    /// sigma3/sigma1 below this is treated as rank 2 when the limb-lead test
+    /// did not already say so. A starting value, not a validated threshold.
+    inline constexpr double kRankFloor = 0.05;
+    /// Same for sigma2/sigma1 and rank 1.
+    inline constexpr double kRank1Floor = 0.05;
+
+    struct RecordBasis {
+        vcg::OrthoBasis basis;
+        int    leadSign[kNumEcgCh] = { 1, 1, 1 };  ///< applied to ECG1/2/3 first
+        bool   polarityChecked = false;      ///< the limb-lead test could run
+        bool   limbLeads = false;            ///< ...and the leads passed it
+        double limbResidual = kNaN;          ///< its normalized residual
+        int    rank = 0;                     ///< 3, 2, or 0 when unusable
+        double s3_over_s1 = kNaN;
+        long long nInstants = 0;
+        bool   valid = false;
+        std::string why;                     ///< when !valid
+        static constexpr const char* kTag = "record_local_svd";
+
+        std::string signsText() const {
+            std::string t;
+            for (int c = 0; c < kNumEcgCh; ++c) t += (leadSign[c] < 0) ? '-' : '+';
+            return t;
+        }
+    };
+
+    /// The three lanes of one bin on the R-relative axis [-pre, post], each
+    /// channel read at its own R column. False when a channel or R is missing.
+    inline bool binLanes(const time_bin& b, int pre, int post,
+        std::vector<double>(&lane)[kNumEcgCh]) {
+        if (pre < 0 || post < 0 || pre + post < 1) return false;
+        const std::vector<double>* tpl[kNumEcgCh] = {
+            &b.ch1.ecgTemplate_raw, &b.ch2.ecgTemplate_raw, &b.ch3.ecgTemplate_raw };
+        double rc[kNumEcgCh];
+        for (int c = 0; c < kNumEcgCh; ++c) {
+            rc[c] = (b.r_peak_auto_ch[c] >= 0.0) ? b.r_peak_auto_ch[c]
+                : static_cast<double>(b.r_peak_ch[c]);
+            if (rc[c] < 0.0 || tpl[c]->size() < 3) return false;
+        }
+        const int n = pre + post + 1;
+        for (int c = 0; c < kNumEcgCh; ++c) {
+            lane[c].assign(n, kNaN);
+            for (int i = 0; i < n; ++i)
+                lane[c][i] = FeatureMarks::sample_at(*tpl[c], rc[c] + (i - pre));
+        }
+        return true;
+    }
+
+    /**
+     * @brief ONE basis for the whole record, from its own templates.
+     *
+     *        Accumulated over every usable bin's three-lead template on
+     *        [R - preMs, R + postMs] -- the stretch the loops are cut from --
+     *        so the basis describes the same waveforms it is applied to.
+     *        Templates rather than raw signal because they are what the save
+     *        path has, and because the median has already removed the noise a
+     *        raw-signal covariance would fold into PC3.
+     *
+     *        Order: inversion check, sign correction, accumulate, finish, sign
+     *        convention (fixSigns), rank. See the header for why each.
+     */
+    inline RecordBasis buildRecordBasis(const std::vector<time_bin>& bins,
+        double fs, double preMs = 200.0, double postMs = 600.0) {
+        RecordBasis rb;
+        if (!(fs > 0.0)) { rb.why = "no ECG sample rate"; return rb; }
+        const int pre = static_cast<int>(std::lround(preMs * 0.001 * fs));
+        const int post = static_cast<int>(std::lround(postMs * 0.001 * fs));
+
+        // Every usable bin's lanes, kept: the sign correction is decided from
+        // all of them and then applied to all of them.
+        std::vector<std::vector<double>> all[kNumEcgCh];
+        for (const time_bin& b : bins) {
+            if (b.bad_segment) continue;
+            std::vector<double> lane[kNumEcgCh];
+            if (!binLanes(b, pre, post, lane)) continue;
+            for (int c = 0; c < kNumEcgCh; ++c) all[c].push_back(std::move(lane[c]));
+        }
+        if (all[0].empty()) { rb.why = "no bin has all three ECG templates"; return rb; }
+
+        auto accumulate = [&](vcg::OrthoAccumulator& acc) {
+            for (std::size_t k = 0; k < all[0].size(); ++k)
+                acc.addLanes({ &all[0][k], &all[1][k], &all[2][k] });
+            };
+
+        // ---- INVERSION --------------------------------------------------
+        {
+            vcg::OrthoAccumulator probe;
+            accumulate(probe);
+            const vcg::PolarityCheckResult pc = vcg::checkLimbLeadPolarity(probe);
+            rb.polarityChecked = pc.why.empty();
+            rb.limbResidual = pc.normalizedResidual;
+            rb.limbLeads = rb.polarityChecked && pc.consistentWithLimbLeads;
+            // Only a PASSING test is allowed to flip a lead: when no sign
+            // combination makes the leads obey Einthoven's law they are not
+            // limb leads, and the best of eight is an arbitrary answer.
+            if (rb.limbLeads)
+                for (int c = 0; c < kNumEcgCh; ++c) rb.leadSign[c] = pc.sign[c];
+        }
+        for (int c = 0; c < kNumEcgCh; ++c)
+            if (rb.leadSign[c] < 0)
+                for (auto& lane : all[c]) for (double& v : lane) v = -v;
+
+        // ---- BASIS --------------------------------------------------------
+        vcg::OrthoAccumulator acc;
+        accumulate(acc);
+        rb.nInstants = acc.n;
+        rb.basis = acc.finish(/*minSamples=*/500);
+        if (!rb.basis.valid) { rb.why = rb.basis.why; return rb; }
+        {
+            // The sign convention needs the traces; one concatenated lane set.
+            std::vector<double> cat[kNumEcgCh];
+            for (int c = 0; c < kNumEcgCh; ++c)
+                for (const auto& lane : all[c]) cat[c].insert(cat[c].end(), lane.begin(), lane.end());
+            vcg::fixSigns(rb.basis, { &cat[0], &cat[1], &cat[2] });
+        }
+        rb.basis.label = "record-local SVD (PC1/PC2/PC3)";
+        rb.basis.mat.name = "record-local SVD (PC1/PC2/PC3)";
+
+        // ---- RANK ---------------------------------------------------------
+        const double s1 = rb.basis.sigma[0];
+        rb.s3_over_s1 = (s1 > 0.0) ? rb.basis.sigma[2] / s1 : kNaN;
+        const double s2_over_s1 = (s1 > 0.0) ? rb.basis.sigma[1] / s1 : kNaN;
+        if (!(s2_over_s1 >= kRank1Floor)) {
+            rb.why = "the three leads span one direction (rank 1): no loop";
+            rb.rank = 1;
+            return rb;
+        }
+        rb.rank = (rb.limbLeads || !(rb.s3_over_s1 >= kRankFloor)) ? 2 : 3;
+        rb.valid = true;
+        return rb;
+    }
+
+    // -----------------------------------------------------------------------
     // One bin's full feature row
     // -----------------------------------------------------------------------
     struct BinFeatures {
@@ -389,12 +560,35 @@ namespace vcg_avg {
         return vcg::derivedLeadTrace(r, which);
     }
 
+    /// The loop on the record basis: lead signs applied, projected onto
+    /// PC1/PC2/PC3 about the signal's own zero (NOT the record mean -- the
+    /// QRS-T angle is measured from the origin, and a rotation preserves it),
+    /// and held in the PC1-PC2 plane when the basis is rank 2.
+    inline Loop loopOnRecordBasis(const time_bin& b, int pre, int post,
+        const RecordBasis& rb) {
+        Loop out;
+        out.firstOffset = -pre;
+        if (!rb.valid) return out;
+        std::vector<double> lane[kNumEcgCh];
+        if (!binLanes(b, pre, post, lane)) return out;
+        for (int c = 0; c < kNumEcgCh; ++c)
+            if (rb.leadSign[c] < 0) for (double& v : lane[c]) v = -v;
+        const vcg::VcgResult r = vcg::reconstructVCG(
+            std::vector<const std::vector<double>*>{ &lane[0], & lane[1], & lane[2] },
+            rb.basis.mat);
+        if (!r.valid) return out;
+        out.pts = r.samples;
+        if (rb.rank == 2)
+            for (vcg::VCGSample& s : out.pts) if (!std::isnan(s.z)) s.z = 0.0;
+        return out;
+    }
+
     /// Extract every interval-dependent feature from an already-built loop.
     /// loopVariability is left NaN; pass it separately if it was computed at
     /// build time.
     inline BinFeatures extractFeatures(int binIndex, const Loop& loop,
         const global_intervals::GlobalIntervals& g,
-        double fs) {
+        double fs, int rank = 3) {
         BinFeatures f;
         f.binIndex = binIndex;
         if (loop.pts.empty()) { f.note = "no VCG loop (channel or R column missing)"; return f; }
@@ -431,6 +625,14 @@ namespace vcg_avg {
                 f.qrstAngle_deg = vcg::spatialQRSTAngle(loop.pts, qLo, qHi, tHi);
             }
         }
+        // RANK 2: the third axis is not signal (see the header), so nothing
+        // measured along it is reported. The in-plane quantities stand.
+        if (rank == 2) {
+            f.qrsArea_xz = f.qrsArea_yz = kNaN;
+            f.tArea_xz = f.tArea_yz = kNaN;
+            f.qrsLambda3 = kNaN;
+            f.planarity = kNaN;
+        }
         f.valid = true;
         return f;
     }
@@ -455,6 +657,31 @@ namespace vcg_avg {
         return extractFeatures(binIndex, loopFromTemplates(b, pre, post, mat), g, fs);
     }
 
+    /// The save path on the record basis. Same window rule as above; the loop
+    /// is projected onto `rb`, and the rank decides which features exist.
+    inline BinFeatures analyzeBinWithBasis(int binIndex, const time_bin& b,
+        const global_intervals::GlobalIntervals& g, double fs,
+        const RecordBasis& rb, int marginSamples = 10) {
+        if (!rb.valid) {
+            BinFeatures f;
+            f.binIndex = binIndex;
+            f.note = "no record basis: " + rb.why;
+            return f;
+        }
+        int pre = 0, post = 0;
+        if (g.valid) {
+            pre = static_cast<int>(std::ceil(-g.qrsOnset)) + marginSamples;
+            post = static_cast<int>(std::ceil(g.qrsOffset)) + marginSamples;
+            if (!std::isnan(g.qtInterval_ms) && fs > 0.0) {
+                const double tEndOff = g.qrsOnset + g.qtInterval_ms * fs / 1000.0;
+                post = std::max(post, static_cast<int>(std::ceil(tEndOff)) + marginSamples);
+            }
+        }
+        if (pre <= 0)  pre = 40 + marginSamples;
+        if (post <= 0) post = 60 + marginSamples;
+        return extractFeatures(binIndex, loopOnRecordBasis(b, pre, post, rb), g, fs, rb.rank);
+    }
+
     // -----------------------------------------------------------------------
     // CSV
     // -----------------------------------------------------------------------
@@ -465,7 +692,10 @@ namespace vcg_avg {
             "t_area_xy,t_area_xz,t_area_yz,"
             "qrs_lambda1,qrs_lambda2,qrs_lambda3,"
             "planarity_out_of_plane_fraction,planarity_l2_over_l1,"
-            "peak_spatial_velocity,loop_variability,qrs_duration_ms,note";
+            "peak_spatial_velocity,loop_variability,qrs_duration_ms,note,"
+            // Appended, so every existing column keeps its position. One
+            // basis per record, repeated on every row.
+            "basis,basis_rank,lead_signs,limb_lead_residual,basis_s3_over_s1";
     }
 
     /// Empty cell for a NaN, so a missing value is never read as 0 by whatever
@@ -485,7 +715,10 @@ namespace vcg_avg {
      */
     inline bool writeVcgCsv(const std::string& dir,
         const std::string& subjectId,
-        const std::vector<BinFeatures>& rows) {
+        const std::vector<BinFeatures>& rows,
+        // The basis every row was measured on. Null = the old identity
+        // transform, reported as such so the file is never ambiguous.
+        const RecordBasis* rb = nullptr) {
         const std::string path = dir + "/" + subjectId + "_vcg.csv";
         std::ofstream f(path);
         if (!f) return false;
@@ -499,7 +732,14 @@ namespace vcg_avg {
                 << num(r.qrsLambda1) << ',' << num(r.qrsLambda2) << ',' << num(r.qrsLambda3) << ','
                 << num(r.planarity) << ',' << num(r.planarity_l2_l1) << ','
                 << num(r.peakSpatialVelocity) << ',' << num(r.loopVariability) << ','
-                << num(r.qrsDuration_ms) << ',' << r.note << "\n";
+                << num(r.qrsDuration_ms) << ',' << r.note << ',';
+            if (rb && rb->valid)
+                f << RecordBasis::kTag << ',' << rb->rank << ',' << rb->signsText()
+                << ',' << num(rb->limbResidual) << ',' << num(rb->s3_over_s1) << "\n";
+            else if (rb)
+                f << RecordBasis::kTag << ",0,," << num(rb->limbResidual) << ",\n";
+            else
+                f << "identity_not_orthogonal,,,,\n";
         }
         return static_cast<bool>(f);
     }

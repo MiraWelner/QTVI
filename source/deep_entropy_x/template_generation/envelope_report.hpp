@@ -189,6 +189,14 @@ namespace envelope_report {
         sp.p_end = idx(lm.q_onset);  // no P-offset finder exists; see header note
         sp.qrs_begin = idx(lm.q_onset);
         sp.qrs_end = idx(lm.s_end);
+        // T ONSET was never set, so the T segment was always absent (has(T)
+        // needs t_begin >= 0) and every T envelope came out empty. Found from
+        // the same J and T end the spans already use, on the same template.
+        // Not added to TemplateLandmarks: every writer calls that detector,
+        // and only the envelopes need the onset.
+        sp.t_begin = (lm.s_end >= 0.0 && lm.t_end > lm.s_end)
+            ? idx(FeatureMarks::find_t_begin(ecg, fs, lm.s_end, lm.t_end))
+            : -1;
         sp.t_end = idx(lm.t_end);
         return sp;
     }

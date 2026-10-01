@@ -108,6 +108,10 @@ public:
     static double find_t_peak(const std::vector<double>& ecg, double bracketSEnd, double bracketTEnd, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
         upsample_for_fit::PeakCandidates* cand = nullptr);
     static double find_t_end(const std::vector<double>& ecg, double fs, int r_col, double j_point = -1.0, upsample_for_fit::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
+    // T ONSET: where the T wave leaves the ST segment. Bracketed by the J point
+    // and T end the caller already has, so it cannot disagree with them; -1
+    // when either is missing. See feature_marks.cpp.
+    static double find_t_begin(const std::vector<double>& ecg, double fs, double j_point, double t_end, upsample_for_fit::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
     static double find_p_peak(const std::vector<double>& v, double loIn, double hiIn, double fs, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
         upsample_for_fit::PeakCandidates* cand = nullptr);
 

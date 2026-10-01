@@ -818,6 +818,7 @@ static const char* anchorName_boundary(AnchorType a) {
     case AnchorType::Q_ONSET: return "Q_ONSET";
     case AnchorType::R_PEAK:  return "R_PEAK";
     case AnchorType::J_POINT: return "J_POINT";
+    case AnchorType::T_END:   return "T_END";
     }
     return "UNKNOWN";
 }
@@ -954,6 +955,92 @@ void TemplateViewerWindow::logBoundaryTrainingAtSave() {
 // screen. buildPulseVariant only fills pulse_by_variant -- it does not adopt a
 // waveform or recompose pulse_marks -- so nothing the operator sees moves, and
 // a slot the data refuses keeps the seeded detection as before.
+// ---- <id>_pulse_moves.csv: WHAT EACH PULSE ALIGNMENT DID TO EACH BEAT ------
+//
+// The pulse counterpart of the build's <stem>_beat_moves.csv. One row per
+// cohort beat (members_clean, else members) of every pulse template, with the
+// Foot (_F) and Peak (_P) re-levels side by side:
+//
+//   F_pct               how far up the upstroke _F levelled (0 = the foot)
+//   <V>_anchor_ms       where this beat's own landmark was found -- its trough
+//                       or its pct crossing for _F, its peak for _P -- in ms
+//                       from the start of the beat frame
+//   <V>_h_offset_ms     that landmark minus the median of the stack's, in ms.
+//                       HORIZONTAL, BUT NOT A MOVE: a re-level shifts no beat
+//                       sideways, so this is how far the beat still sits from
+//                       its siblings at that landmark after the build's up50
+//                       time-alignment. Positive = later.
+//   <V>_v_shift         VERTICAL: the amount subtracted from the beat to bring
+//                       it to the stack's common level, raw pulse units. Same
+//                       sign convention as tp/pq_mv_shift in beat_moves.
+//
+// NaN where that variant skipped the beat or was refused for the template.
+// `template` is the slot index and `row` the local beat row, so this joins
+// _template_confirmations.csv on (file_id, bin, channel, template).
+static void writePulseMovesCsv(std::ostream& f, const std::vector<time_bin>& bins,
+    const std::string& subj, double ppgRateHz)
+{
+    const double kNaN = std::numeric_limits<double>::quiet_NaN();
+    const double msPer = (ppgRateHz > 0.0) ? 1000.0 / ppgRateHz : kNaN;
+
+    struct View {
+        const tbank::PulseVariant* v = nullptr;
+        std::map<uint32_t, std::size_t> at;   // row id -> index into v's arrays
+        double medAnchor = std::numeric_limits<double>::quiet_NaN();
+    };
+    auto viewOf = [&](const tbank::PulseVariant& pv) {
+        View out;
+        out.v = &pv;
+        std::vector<double> a;
+        for (std::size_t k = 0; k < pv.row_ids.size(); ++k) {
+            out.at[pv.row_ids[k]] = k;
+            if (k < pv.row_anchor_col.size() && std::isfinite(pv.row_anchor_col[k]))
+                a.push_back(pv.row_anchor_col[k]);
+        }
+        if (!a.empty()) {
+            std::sort(a.begin(), a.end());
+            const std::size_t m = a.size() / 2;
+            out.medAnchor = (a.size() % 2) ? a[m] : 0.5 * (a[m - 1] + a[m]);
+        }
+        return out;
+        };
+    auto cells = [&](std::ostream& o, const View& vw, uint32_t id) {
+        double anc = kNaN, off = kNaN, vs = kNaN;
+        const auto it = vw.at.find(id);
+        if (it != vw.at.end()) {
+            const std::size_t k = it->second;
+            if (k < vw.v->row_anchor_col.size()) anc = vw.v->row_anchor_col[k];
+            if (k < vw.v->row_v_shift.size())    vs = vw.v->row_v_shift[k];
+            if (std::isfinite(anc) && std::isfinite(vw.medAnchor))
+                off = (anc - vw.medAnchor) * msPer;
+            anc *= msPer;
+        }
+        o << ',' << anc << ',' << off << ',' << vs;
+        };
+
+    f << "file_id,bin,channel,template,row,percent_upstroke_used_for_alignment,foot_location_wrt_template_start,foot_horizontal_shift_ms,foot_vertical_shift,"
+        "peak_location_wrt_template_start,peak_horizontal_shift_ms,peak_vertical_shift_ms\n";
+    for (std::size_t bi = 0; bi < bins.size(); ++bi) {
+        const tbank::TemplateBank& bank = bins[bi].ppg_bank;
+        for (int t = 0; t < bank.size(); ++t) {
+            const tbank::template_of_all_signals& slot = bank.templates[t];
+            if (slot.tmpl.empty()) continue;
+            const std::vector<uint32_t>& cohort = !slot.members_clean.empty()
+                ? slot.members_clean : slot.members;
+            const tbank::PulseVariant& F = slot.pulseVariant(tbank::PulseAnchor::Foot);
+            const tbank::PulseVariant& P = slot.pulseVariant(tbank::PulseAnchor::Peak);
+            const View fv = viewOf(F), pv = viewOf(P);
+            for (const uint32_t id : cohort) {
+                f << subj << ',' << bi << ",PPG," << t << ',' << id << ','
+                    << (F.pct >= 0.0 ? F.pct : kNaN);
+                cells(f, fv, id);
+                cells(f, pv, id);
+                f << '\n';
+            }
+        }
+    }
+}
+
 void TemplateViewerWindow::buildAllPulseVariants() {
     const double pct = percentage_for_aligning();   // Peak forces 100 itself
     for (int bi = 0; bi < static_cast<int>(m_bins.size()); ++bi) {
@@ -1008,6 +1095,11 @@ void TemplateViewerWindow::save_bin_and_csv() {
         writeTemplateMarkingsBin(canonicalBin.toStdString(), m_bins,
             m_sampleRate, m_onOffsetFitMode, m_peakFitMode,
             static_cast<int>(m_ppgAlignMode), m_ppgAlignPercent);
+        // The record's lags, method and confidence, as a trailer the reader
+        // never looks at; see channel_offset::appendTrailer.
+        if (!channel_offset::appendTrailer(canonicalBin.toStdString(), m_recordLag))
+            std::cerr << "[channel_offset] could not append the lag to "
+            << canonicalBin.toStdString() << "\n";
         std::cout << "Saved: " << canonicalBin.toStdString() << "\n";
         logBoundaryTrainingAtSave();
 
@@ -1020,6 +1112,29 @@ void TemplateViewerWindow::save_bin_and_csv() {
         // sidecar that needs merging, and the markers it measures against
         // change on every pass, so the latest write is the one that matters.
         {
+            // ONE record-local SVD basis for every bin, built from this
+            // record's own templates with the inversion and rank checks. See
+            // vcg_signal_average.hpp. Written beside the CSV so the axes the
+            // plane areas were measured on are on disk with them.
+            const vcg_avg::RecordBasis vcgBasis =
+                vcg_avg::buildRecordBasis(m_bins, m_sampleRate);
+            if (vcgBasis.valid) {
+                std::string bwhy;
+                const std::string bpath = vcgDir.absolutePath().toStdString() + "/"
+                    + m_subjectId.toStdString() + "_vcg_template_basis.csv";
+                if (!vcg::writeBasisCsv(vcgBasis.basis, bpath,
+                    m_subjectId.toStdString(), bwhy))
+                    std::cerr << "[vcg] basis CSV failed: " << bwhy << "\n";
+                std::cout << "[vcg] record-local basis: rank " << vcgBasis.rank
+                    << ", lead signs " << vcgBasis.signsText()
+                    << ", limb-lead residual " << vcgBasis.limbResidual
+                    << ", s3/s1 " << vcgBasis.s3_over_s1 << "\n";
+            }
+            else {
+                std::cerr << "[vcg] no record basis (" << vcgBasis.why
+                    << "): every VCG row is empty\n";
+            }
+
             std::vector<vcg_avg::BinFeatures> vcgRows;
             vcgRows.reserve(m_bins.size());
             for (int vi = 0; vi < (int)m_bins.size(); ++vi) {
@@ -1043,14 +1158,14 @@ void TemplateViewerWindow::save_bin_and_csv() {
                         global_intervals::MarkerSource::AUTO);
                     fromAuto = vgi.valid;
                 }
-                auto vrow = vcg_avg::analyzeBinFromTemplates(
-                    vi, m_bins[vi], vgi, m_sampleRate);
+                auto vrow = vcg_avg::analyzeBinWithBasis(
+                    vi, m_bins[vi], vgi, m_sampleRate, vcgBasis);
                 if (vrow.valid && fromAuto) vrow.note = "auto markers";
                 vcgRows.push_back(vrow);
             }
             const bool vok = vcg_avg::writeVcgCsv(
                 vcgDir.absolutePath().toStdString(),
-                m_subjectId.toStdString(), vcgRows);
+                m_subjectId.toStdString(), vcgRows, &vcgBasis);
             std::cout << (vok ? "Saved: " : "FAILED: ")
                 << vcgDir.absolutePath().toStdString() << "/"
                 << m_subjectId.toStdString() << "_vcg.csv\n";
@@ -1156,6 +1271,21 @@ void TemplateViewerWindow::save_bin_and_csv() {
                     }
                 }
             }
+        }
+
+        // ---- EACH PULSE BEAT'S FOOT / PEAK SHIFTS --------------------
+        //
+        // After buildAllPulseVariants above, so every template's _F and _P
+        // carry their per-row results. See writePulseMovesCsv.
+        {
+            const QString pPath = (m_logsDir.isEmpty() ? csvDir.absolutePath() : m_logsDir) + "/" + m_subjectId + "_ppg_alignment_shifts.csv";
+            std::ofstream pf(pPath.toStdString(), std::ios::trunc);
+            if (!pf)
+                throw std::runtime_error("cannot open for write: " + pPath.toStdString());
+            writePulseMovesCsv(pf, m_bins, m_subjectId.toStdString(), m_ppgRateHz);
+            if (!pf.good())
+                throw std::runtime_error("failed writing " + pPath.toStdString());
+            std::cout << "Wrote pulse moves CSV: " << pPath.toStdString() << "\n";
         }
     }
     catch (const std::exception& e) {

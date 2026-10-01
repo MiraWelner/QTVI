@@ -312,6 +312,33 @@ void BinPlotWidget::setPulseAnchor(Channel ch, double col) {
     update();
 }
 
+// Paint the global-interval reference lines (see bin_plot_widget.hpp).
+//
+// x comes through the widget's own sample-to-pixel mapping, so the lines cannot
+// drift from the trace when the panel resizes -- one mapping, not two.
+//
+// A boundary set by another lead can fall outside THIS template's extent; such
+// a line is skipped rather than clamped to the frame edge, where it would imply
+// a boundary that was measured here.
+template <typename XMap>
+static void paintReferenceLines(QPainter& p,
+    const std::vector<global_interval_lines::Line>& lines,
+    XMap xForColumn, int topPx, int bottomPx, int nEcgSamples)
+{
+    if (lines.empty() || nEcgSamples < 2) return;
+    p.save();
+    for (const global_interval_lines::Line& l : lines) {
+        if (l.column < 0.0 || l.column > nEcgSamples - 1) continue;
+        const double x = xForColumn(l.column);
+        QPen pen(l.color);
+        pen.setWidthF(0.7);
+        pen.setStyle(Qt::DotLine);
+        p.setPen(pen);
+        p.drawLine(QPointF(x, topPx), QPointF(x, bottomPx));
+    }
+    p.restore();
+}
+
 void BinPlotWidget::setReferenceLines(
     const std::vector<global_interval_lines::Line>& lines) {
     m_refLines = lines;
@@ -328,7 +355,18 @@ double BinPlotWidget::timeAt(Channel ch, double i) const {
     const double rate = m_rates[k], anchor = m_rAnchor[k];
     if (!(rate > 0.0) || anchor < 0.0)
         return std::numeric_limits<double>::quiet_NaN();
-    return (i - anchor) / rate;
+    // The ECG's display shift lives HERE and nowhere else, so the trace, every
+    // bar drawn on it, and sampleFromX's inverse all agree on where a column is.
+    const double shift = (ch == Channel::Ecg) ? m_ecgShiftSec : 0.0;
+    return (i - anchor) / rate + shift;
+}
+
+void BinPlotWidget::setEcgDisplayShift(double seconds) {
+    const double v = std::isfinite(seconds) ? seconds : 0.0;
+    if (m_ecgShiftSec == v) return;
+    m_ecgShiftSec = v;
+    recomputeFrame();
+    update();
 }
 
 double BinPlotWidget::xFromTime(double t) const {
@@ -416,8 +454,9 @@ void BinPlotWidget::recomputeFrame() {
     // in AFTER the per-trace adds so it widens, never narrows: the drawn ECG
     // trace is one of the four whose union this is, so it always fits inside.
     if (m_ecgFrameFixed) {
-        lo = std::min(lo, m_ecgFrameLo);
-        hi = std::max(hi, m_ecgFrameHi);
+        // The pinned window is in UNSHIFTED ECG seconds; it moves with the trace.
+        lo = std::min(lo, m_ecgFrameLo + m_ecgShiftSec);
+        hi = std::max(hi, m_ecgFrameHi + m_ecgShiftSec);
     }
 
     if (!(lo < hi)) { m_tMin = 0.0; m_tMax = 1.0; return; }   // nothing drawable
@@ -1035,8 +1074,15 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             p.drawText(QPointF(x - 3.0 * lbl.size(), xAxisY + 12), lbl);
             // X-axis caption, centered under the tick numbers.
             if (m_binIndex == 0) {
+                // Says so when the ECG is drawn shifted: 0 is still the R peak's
+                // own time, but the ECG trace is drawn later than that.
+                const QString cap = (m_ecgShiftSec != 0.0)
+                    ? QString("time (s, 0 = R peak; ECG drawn %1%2 ms for channel lag)")
+                    .arg(m_ecgShiftSec > 0.0 ? "+" : "")
+                    .arg(std::lround(m_ecgShiftSec * 1000.0))
+                    : QString("time (s, 0 = R peak)");
                 p.drawText(QRectF(yAxisL, xAxisY + 13.0, yAxisR - yAxisL, 11.0),
-                    Qt::AlignHCenter | Qt::AlignTop, "time (s, 0 = R peak)");
+                    Qt::AlignHCenter | Qt::AlignTop, cap);
             }
         }
 
@@ -1177,7 +1223,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     }
     p.restore();
 
-    global_interval_lines::paint(p, m_refLines,
+    paintReferenceLines(p, m_refLines,
         [this](double s) { return xFromSample(Channel::Ecg, s); },
         margin_top, h - margin_bottom, (int)m_ecg.size());
 

@@ -1,11 +1,39 @@
 #pragma once
 /**
  * @file   ppg_realign.hpp
- * @brief  Re-stack one pulse template about an operator-corrected foot, or swap between peak align and foot align
+ * @brief  Re-stack one pulse template about an operator-corrected foot.
+ *
+ *         WHAT THIS IS FOR. The pulse template a column draws is a column-wise
+ *         median over the beats the build assigned to that morphology, stacked
+ *         on whatever fiducial alignment.hpp was told to use. When the foot
+ *         detector is wrong it is usually wrong the SAME WAY on every beat in
+ *         the bin -- it lands on the dicrotic notch, or on the reflected wave's
+ *         upstroke -- and the averaged template then smears about the wrong
+ *         landmark. One operator correction, dragged on the average, is enough
+ *         to say where the foot really is; this re-detects each beat's own foot
+ *         near that column and re-medians the stack about it.
+ *
+ *         WHAT IT DELIBERATELY DOES NOT DO. It does not re-run the pulse QC
+ *         filter, and it does not touch membership: the survivor set is exactly
+ *         the one the build chose. Re-filtering here would change which beats
+ *         are in the group, which changes the morphology split, which is the
+ *         pipeline's job and not a mouse-release's. So this is an honest
+ *         re-average of a fixed cohort and nothing more -- and the template it
+ *         produces is anchored one way while its cohort was selected under
+ *         another, which the caller should say out loud rather than hide.
+ *
+ *         ONE NUMBER CANNOT BE AN ALIGNMENT. The dragged bar is a single column
+ *         on the AVERAGE; a re-stack needs a foot per beat. Applying the
+ *         operator's column as a rigid offset to every beat would translate the
+ *         template and change nothing about its shape, which is not what the
+ *         gesture means. So the column is used as a SEARCH HINT: each beat's
+ *         own trough within +-search_halfwin of it. That is why the correction
+ *         can be large (notch to foot, 200 ms) while the window stays small --
+ *         the window only has to cover beat-to-beat scatter of the true foot,
+ *         not the size of the correction.
  *
  * @author Mira Welner
  * @email  MEW386@pitt.edu
- * @date 2026-09-30
  */
 
 #include <algorithm>
@@ -21,11 +49,33 @@
 
 namespace ppg_realign {
 
+    // ---- ONE SLOT'S BEATS, BORROWED ------------------------------------
+    //
+    // PER SLOT, NOT PER BIN. A re-stack re-medians one slot's cohort
+    // (members_clean, else members), and nothing else in the bin takes part,
+    // so that cohort is all that is gathered.
+    //
+    // THE WIDTH IS THE SLOT'S. It is the longest MEMBER row, not the bin's
+    // longest slice, so a slot does not inherit the far tail of beats that
+    // belong to its siblings.
+    //
+    // BORROWED, NEVER OWNED. Each pointer aims into the caller's
+    // BeatsFile::per_channel_beats, which outlives any SlotBeats, so copying
+    // or moving one is safe. There is no disk path: the viewer is always
+    // handed the BeatsFile the build produced, and <stem>_beats.bin is not a
+    // safe substitute -- this run's copy is written late by a deferred task,
+    // so what is on disk while the window is open can be a previous run's,
+    // with a different bin and member layout.
+    //
+    // Rows are in no particular order: every statistic taken over them is a
+    // column median, a spread or a sorted median, all order-invariant.
     struct SlotBeats {
-        //all the valid beats in the slot
         int width = 0;
         int n_members = 0;   // cohort offered, including stale indices dropped
         std::vector<const std::vector<double>*> rows;
+        // The local row each entry of `rows` is, parallel to it -- the id the
+        // per-row outputs of the re-level are reported against.
+        std::vector<uint32_t> ids;
 
         std::size_t size() const { return rows.size(); }
         const std::vector<double>& row(std::size_t i) const { return *rows[i]; }
@@ -41,10 +91,12 @@ namespace ppg_realign {
         SlotBeats out;
         out.n_members = static_cast<int>(cohort.size());
         out.rows.reserve(cohort.size());
+        out.ids.reserve(cohort.size());
         for (const uint32_t r : cohort) {
             if (r >= binRows.size()) continue;          // stale member list
             const std::vector<double>& row = binRows[r];
             out.rows.push_back(&row);
+            out.ids.push_back(r);
             out.width = std::max(out.width, static_cast<int>(row.size()));
         }
         return out;
@@ -399,18 +451,71 @@ namespace ppg_realign {
             /*pct=*/0.0, /*anchorCol=*/operatorFootCol);
     }
 
+    // ======================================================================
+    // THE VERTICAL SIBLING: RE-LEVEL A COHORT ON THE OPERATOR'S FOOT
+    // ======================================================================
+    //
+    // A DIFFERENT AXIS FROM realignAt, AND THAT IS THE WHOLE DISTINCTION. The
+    // "Align PPG Horizontal" group re-TIMES the stack -- it decides which
+    // instant every beat is shifted onto. The foot bar does not: the foot is
+    // the pulse's vertical reference, in the build (pass 2 of
+    // extract_ppg_beats_and_align DC-matches each beat's baseline to the
+    // reference beat's) and in the viewer (normalize_ppg_or_similar computes
+    // 100*(sample - footY)/footY, so the foot column is subtracted AND divided
+    // by, and the band is scaled about the same column).
+    //
+    // So "re-do the foot alignment" means: level every member row so they
+    // agree at the column the operator put the bar on, then re-median. No
+    // sample moves sideways.
+    //
+    // ONE SHARED COLUMN, NOT A SEARCH. The bar says "the foot is HERE", so
+    // that column is read on every row directly -- no per-row trough hunt,
+    // which would re-derive an answer the operator has just overridden. It is
+    // a slightly stronger claim than the detector makes (the detector returns
+    // a foot per beat), and it is a fair one here because the rows arrive
+    // already up50 time-aligned, so their feet very nearly coincide in column
+    // anyway.
+    //
+    // EACH ROW GETS ITS OWN OFFSET, which is what makes this more than a
+    // cosmetic shift of the average: the rows' relative vertical positions
+    // change, so the column median changes at every other column too. The
+    // waveform's SHAPE moves, not just its height.
+    //
+    // ---- AND IT LEVELS TO A VALUE, NOT TO ZERO --------------------------
+    //
+    // Subtracting each row's own level outright would leave tmpl[foot] == 0 --
+    // and that is precisely the divisor normalize_ppg_or_similar uses. A
+    // near-zero divisor is the failure maybeNotchTrace's comment describes: a
+    // tiny DC change becomes a huge relative one and the normalized trace
+    // collapses to the bottom of the axis, looking like the channel vanished.
+    //
+    // So the rows are brought to a COMMON BASELINE VALUE -- the median of
+    // their own levels, a real amplitude from this cohort -- exactly as the
+    // build matches each beat to its reference beat rather than to zero.
     struct RelevelResult {
-        // the output returned when a ppg is releveled vertically
-        bool ok = false; 
+        bool ok = false;
         std::string why;
         std::vector<double> tmpl;     // re-medianed waveform
-        std::vector<double> std;      // local-ratio IQR about foot_col
+        std::vector<double> iqr;      // local-ratio IQR about foot_col
         int    foot_col = -1;         // the operator's column
         double baseline = 0.0;        // the common level every row was brought to
         int    n_members = 0;         // cohort offered
         int    n_used = 0;            // cohort with a readable level there
         double median_level = 0.0;    // median signed offset applied
         double max_level = 0.0;       // largest |offset| applied
+
+        // ---- PER ROW, parallel to the SlotBeats rows (NaN = row skipped) --
+        //
+        // row_anchor_col: the column this row was levelled at -- its own
+        // trough, or its own pct crossing (sub-sample), or for relevelAt the
+        // shared column. WHERE THE ROW'S LANDMARK IS, not a move: no re-level
+        // shifts a row sideways.
+        //
+        // row_v_shift: level - baseline, the amount SUBTRACTED from the row
+        // (the same sign convention as the ECG tp/pq shifts in
+        // <stem>_beat_moves.csv).
+        std::vector<double> row_anchor_col;
+        std::vector<double> row_v_shift;
     };
 
     // mean_halfwin is in samples: the level for a row is the MEAN of the
@@ -439,6 +544,10 @@ namespace ppg_realign {
         std::vector<double> level;
         src.reserve(beats.size());
         level.reserve(beats.size());
+        std::vector<std::size_t> srcRow;   // which SlotBeats row each src is
+        srcRow.reserve(beats.size());
+        out.row_anchor_col.assign(beats.size(), std::numeric_limits<double>::quiet_NaN());
+        out.row_v_shift.assign(beats.size(), std::numeric_limits<double>::quiet_NaN());
         for (std::size_t i = 0; i < beats.size(); ++i) {
             const std::vector<double>& row = beats.row(i);
             const int lo = std::max(0, target - mean_halfwin);
@@ -454,6 +563,8 @@ namespace ppg_realign {
             // on a guess.
             if (n == 0) continue;
             src.push_back(&row);
+            srcRow.push_back(i);
+            out.row_anchor_col[i] = static_cast<double>(target);
             level.push_back(sum / static_cast<double>(n));
         }
 
@@ -491,6 +602,7 @@ namespace ppg_realign {
             }
             levelled.push_back(std::move(dst));
             offs.push_back(off);
+            out.row_v_shift[srcRow[i]] = -off;   // level - baseline: subtracted
             if (std::abs(off) > std::abs(out.max_level)) out.max_level = off;
         }
         {
@@ -532,7 +644,7 @@ namespace ppg_realign {
         //
         // RAW AMPLITUDE, not a perfusion ratio: the display divides this field
         // by the foot amplitude itself. See rawIqrColumns.
-        out.std = raw_std_columns(levelled, out.n_used);
+        out.iqr = raw_std_columns(levelled, out.n_used);
 
         out.ok = true;
         return out;
@@ -595,6 +707,10 @@ namespace ppg_realign {
         std::vector<double> level;
         src.reserve(beats.size());
         level.reserve(beats.size());
+        std::vector<std::size_t> srcRow;   // which SlotBeats row each src is
+        srcRow.reserve(beats.size());
+        out.row_anchor_col.assign(beats.size(), std::numeric_limits<double>::quiet_NaN());
+        out.row_v_shift.assign(beats.size(), std::numeric_limits<double>::quiet_NaN());
         for (std::size_t i = 0; i < beats.size(); ++i) {
             const std::vector<double>& row = beats.row(i);
 
@@ -606,10 +722,12 @@ namespace ppg_realign {
             if (foot < 0) continue;
 
             int anchor = foot;
+            double anchorD = static_cast<double>(foot);
             if (p > 0.0) {
                 const double c = upstrokePctCol(row, foot, p);
                 if (!(c >= 0.0)) continue;
                 anchor = static_cast<int>(std::lround(c));
+                anchorD = c;
             }
 
             // MEAN OVER +-mean_halfwin ABOUT THIS ROW'S OWN ANCHOR. One sample
@@ -628,6 +746,8 @@ namespace ppg_realign {
             // anchor -- a clipped row, skipped rather than levelled on a guess.
             if (n == 0) continue;
             src.push_back(&row);
+            srcRow.push_back(i);
+            out.row_anchor_col[i] = anchorD;
             level.push_back(sum / static_cast<double>(n));
         }
 
@@ -674,6 +794,7 @@ namespace ppg_realign {
             }
             levelled.push_back(std::move(dst));
             offs.push_back(off);
+            out.row_v_shift[srcRow[i]] = -off;   // level - baseline: subtracted
             if (std::abs(off) > std::abs(out.max_level)) out.max_level = off;
         }
         {
@@ -715,7 +836,7 @@ namespace ppg_realign {
         //
         // RAW AMPLITUDE, not a perfusion ratio: the display divides this field
         // by the foot amplitude itself. See rawIqrColumns.
-        out.std = raw_std_columns(levelled, out.n_used);
+        out.iqr = raw_std_columns(levelled, out.n_used);
 
         out.ok = true;
         return out;

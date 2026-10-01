@@ -33,10 +33,51 @@
 #include <utility>
 #include <vector>
 #include "template_marking_bin_io.hpp"
-#include "global_interval_lines.hpp"
+#include "global_intervals.hpp"
 #include "fiducial_marker_finding/curve_fit.hpp"   // curve_fit::FitMode / PeakFitMode
 
 class QPainter;
+
+// ---------------------------------------------------------------------------
+// GLOBAL INTERVAL REFERENCE LINES
+// ---------------------------------------------------------------------------
+//
+// The GLOBAL QRS boundaries -- the earliest onset and latest offset found in
+// ANY lead -- drawn as vertical lines across every lead's panel, so each panel
+// shows the other leads' extremes. Moved here from global_interval_lines.hpp,
+// which existed only to serve this widget: the WHERE (columns) is
+// global_intervals::channelColumns, pure C++ on the pipeline side; the HOW it
+// looks is here, with the widget that paints it (paintReferenceLines in the
+// .cpp).
+//
+// Drawn dashed and thin, behind the draggable marker bars. They are read-only
+// context imported from the other leads -- if they looked like this panel's own
+// markers, a user would try to drag one.
+namespace global_interval_lines {
+
+    /// One vertical line, in the SAMPLE COLUMNS of the panel that draws it
+    /// (already converted out of the R-relative axis).
+    struct Line {
+        double column = -1.0;
+        QColor color{ 120, 120, 200 };
+    };
+
+    inline QColor onsetColor() { return QColor(90, 110, 210); }
+    inline QColor offsetColor() { return QColor(150, 90, 190); }
+
+    /// The boundary lines for ONE channel's panel. Empty when the intervals are
+    /// not established or the channel has no R; see channelColumns.
+    inline std::vector<Line> forChannel(const time_bin& b,
+        const global_intervals::GlobalIntervals& g, int ch) {
+        std::vector<Line> out;
+        const global_intervals::ChannelColumns cc =
+            global_intervals::channelColumns(b, g, ch);
+        if (cc.qrsOnset >= 0.0)  out.push_back(Line{ cc.qrsOnset, onsetColor() });
+        if (cc.qrsOffset >= 0.0) out.push_back(Line{ cc.qrsOffset, offsetColor() });
+        return out;
+    }
+
+}  // namespace global_interval_lines
 
 class BinPlotWidget : public QWidget {
     Q_OBJECT
@@ -215,6 +256,12 @@ public:
     // build could not measure one. See the note at the top of
     // bin_plot_widget.cpp for what assuming this number cost.
     void setPulseAnchor(Channel ch, double col);
+    // DISPLAY-ONLY ECG SHIFT, seconds (positive = drawn later). For a record
+    // with a measured ECG-to-pulse hardware lag: the ECG is drawn later by the
+    // lag so it lines up with the pulse it caused. Every ECG position -- trace,
+    // bars, glyphs, reference lines, and the column a drag lands on -- goes
+    // through timeAt, so they all move together and nothing stored changes.
+    void setEcgDisplayShift(double seconds);
     double pulseAnchor(Channel ch) const { return m_rAnchor[static_cast<size_t>(ch)]; }
 
     // Frame bounds in seconds relative to R; negative before it.
@@ -565,6 +612,7 @@ private:
     // trace's own finite span, so switching alignment does not move the axis.
     bool   m_ecgFrameFixed = false;
     double m_ecgFrameLo = 0.0;
+    double m_ecgShiftSec = 0.0;   // setEcgDisplayShift; 0 = none
     double m_ecgFrameHi = 0.0;
 
     // ---- THE DRAWN EXTENTS, CACHED PER CHANNEL -------------------------

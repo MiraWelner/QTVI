@@ -20,6 +20,7 @@
 #include "stats_utils.hpp"   // pearson, the shared primitive
 #include "fiducial_marker_finding/alignment.hpp"
 #include "template_generation/normalize_template_amplitude.hpp"
+#include "logging/ptt_logging.hpp"
 
 struct PPGTemplatesResult {
     std::vector<std::vector<double>> templates;   // [bin][sample]
@@ -41,6 +42,10 @@ struct PPGTemplatesResult {
     // and an ECG beat are the same heartbeat. Any consumer treating the two
     // channels as views of one beat needs it.
     std::vector<std::vector<uint32_t>> keptSlices;
+
+    // [bin] every measured pulse beat's R / peak / 50% times, for
+    // <stem>_ptt.csv. Includes beats the QC filter rejected (kept = false).
+    std::vector<std::vector<ptt_log::Beat>> ptt;
 };
 
 /**
@@ -142,6 +147,7 @@ struct PulseTemplateBin {
     std::vector<double> iqr;                  // local-ratio IQR about footCol
     std::vector<std::vector<double>> kept;    // [beat][sample] retained snips
     std::vector<uint32_t> keptSlices;         // R-pair ordinal per retained snip
+    std::vector<ptt_log::Beat> ptt;           // every measured beat; see ptt_log
     int peakCol = -1;                         // systolic peak column
     int footCol = -1;                         // foot column
     // THE TEMPLATE'S R COLUMN, median of the surviving beats' own R columns
@@ -165,7 +171,11 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
     // For the [pulseqc] line only. Passed rather than inferred because this
     // function has no other way to name the bin it is working on, and a
     // retention report that cannot say WHICH bin is nearly useless.
-    size_t bin_index = 0)
+    size_t bin_index = 0,
+    // This channel's confident ECG-to-channel lag in ms (channel_offset), or
+    // 0. Moves the pulse window each beat's landmarks are searched in; the
+    // signal itself is never shifted. See alignment::pulseLandmarks.
+    double lagMs = 0.0)
 {
     PulseTemplateBin out;
 
@@ -182,7 +192,17 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
             static_cast<double>(r) * scale)));
 
     // Per-bin peak-aligned + foot-vertical-aligned beat matrix.
-    const auto aligned = alignment::extract_ppg_beats_and_align(signal, peaksCh, channelRate);
+    // The same R detections, unrounded, so the frame's R-to-50% distance is
+    // the transit time on the ECG clock (see extract_ppg_beats_and_align).
+    std::vector<double> peaksChExact;
+    peaksChExact.reserve(masterPeaksEcg.size());
+    for (size_t r : masterPeaksEcg)
+        peaksChExact.push_back(static_cast<double>(r) * scale);
+
+    const int lagSamples = (lagMs > 0.0)
+        ? static_cast<int>(std::lround(lagMs * 0.001 * channelRate)) : 0;
+    const auto aligned = alignment::extract_ppg_beats_and_align(
+        signal, peaksCh, channelRate, &peaksChExact, lagSamples);
     if (aligned.beats.empty()) return out;
 
     // ---- Matched-filter QC, two-pass, per spec:
@@ -304,6 +324,41 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
             // >= NOT >: the floor is inclusive, and NaN fails either way.
             if (r >= pulse_qc::corrFloor()) survivorRows.push_back(k);
         }
+
+        // ---- TRANSIT TIMES, BEFORE ANY EARLY RETURN ---------------------
+        //
+        // Every beat the slicer measured, survivors or not, so a bin whose
+        // filter rejects everything still reports its transit times. R is the
+        // ECG detection this beat was sliced from, on the ECG clock; the pulse
+        // landmarks are on the pulse clock. See ptt_log.hpp.
+        {
+            const size_t nb = aligned.beats.size();
+            const bool haveAbs = aligned.peak_abs.size() == nb
+                && aligned.up50_abs.size() == nb
+                && aligned.foot_abs.size() == nb
+                && aligned.maxup_abs.size() == nb
+                && aligned.notch_abs.size() == nb
+                && aligned.original_index.size() == nb;
+            if (haveAbs) {
+                std::vector<char> isKept(nb, 0);
+                for (const size_t k : survivorRows) if (k < nb) isKept[k] = 1;
+                out.ptt.reserve(nb);
+                for (size_t k = 0; k < nb; ++k) {
+                    const uint32_t sl = aligned.original_index[k];
+                    if (sl >= masterPeaksEcg.size()) continue;
+                    ptt_log::Beat bt;
+                    bt.slice = sl;
+                    bt.kept = isKept[k] != 0;
+                    bt.r_peak_distance_from_binstart_in_s = static_cast<double>(masterPeaksEcg[sl]) / ecgRate;
+                    bt.peak_s = aligned.peak_abs[k] / channelRate;
+                    bt.t50_s = aligned.up50_abs[k] / channelRate;
+                    bt.foot_s = aligned.foot_abs[k] / channelRate;
+                    bt.maxup_s = aligned.maxup_abs[k] / channelRate;   // NaN stays NaN
+                    bt.notch_s = aligned.notch_abs[k] / channelRate;
+                    out.ptt.push_back(bt);
+                }
+            }
+        }
         // THE ESCALATION LADDER IS GONE. It ran 10% -> 20% -> 50%, taking the
         // first tier that reached a survivor floor, and it was the wrong shape
         // of fix twice over.
@@ -370,19 +425,23 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
             return out;
         }
 
-        // ---- THE TEMPLATE'S R COLUMN --------------------------------------
+        // ---- THE TEMPLATE'S R COLUMN: FIXED BY THE FRAME ------------------
         //
-        // Median over THE SURVIVORS, not over every candidate: the template is
-        // the column-wise median of these rows and of no others, so its R
-        // column is theirs. Clipped beats (r_cols[k] < 0, an R shifted off the
-        // left edge by up50 anchoring) are excluded rather than clamped -- a
-        // clamp to 0 would drag the median toward the pad.
-        {
+        // The aligner builds the frame from R outward (R at the median-RR
+        // beat's own R column, the 50% alignment one median ptt_t50 after it),
+        // so R's column is a definition, not something to measure off the
+        // survivors. It stays put; the pulse is placed relative to it.
+        //
+        // Fallback, for a set built without it: the median of the survivors'
+        // shifted R columns, clipped beats (r_cols < 0) excluded rather than
+        // clamped -- a clamp to 0 would drag the median toward the pad.
+        if (aligned.r_aligned_col >= 0) {
+            out.rCol = aligned.r_aligned_col;
+        }
+        else {
             std::vector<int> rc;
             rc.reserve(survivorRows.size());
-            const bool rcUsable =
-                aligned.r_cols.size() == aligned.beats.size();
-            if (rcUsable)
+            if (aligned.r_cols.size() == aligned.beats.size())
                 for (const size_t k : survivorRows)
                     if (aligned.r_cols[k] >= 0) rc.push_back(aligned.r_cols[k]);
             if (!rc.empty()) {
@@ -572,7 +631,9 @@ inline PPGTemplatesResult CreatePulseTemplates(
     const std::vector<output_binfile_data>& bins,
     std::vector<double> output_binfile_data::* sigMember,
     double ecgRate,
-    double channelRate)
+    double channelRate,
+    // This channel's pulse-window lag; see build_pulse_template_pair_windowed.
+    double lagMs = 0.0)
 {
     size_t n = bins.size();
     PPGTemplatesResult out;
@@ -580,6 +641,7 @@ inline PPGTemplatesResult CreatePulseTemplates(
     out.iqrs.assign(n, {});
     out.kept.assign(n, {});
     out.keptSlices.assign(n, {});
+    out.ptt.assign(n, {});
     out.peakCol.assign(n, -1);
     out.footCol.assign(n, -1);
     out.rCol.assign(n, -1);
@@ -594,11 +656,12 @@ inline PPGTemplatesResult CreatePulseTemplates(
             continue;
         try {
             PulseTemplateBin r = build_pulse_template_pair_windowed(
-                b.*sigMember, channelRate, b.ch1.raw, ecgRate, i);
+                b.*sigMember, channelRate, b.ch1.raw, ecgRate, i, lagMs);
             out.templates[i] = std::move(r.tmpl);
             out.iqrs[i] = std::move(r.iqr);
             out.kept[i] = std::move(r.kept);
             out.keptSlices[i] = std::move(r.keptSlices);
+            out.ptt[i] = std::move(r.ptt);
             out.peakCol[i] = r.peakCol;
             out.footCol[i] = r.footCol;
             out.rCol[i] = r.rCol;

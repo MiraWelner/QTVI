@@ -186,12 +186,14 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
     // <stem>_noise.bin from the noise-marking stage. 
     // The morphology is partitioned by operator class before clustering, so the
     // classes are an input to generation rather than an annotation applied after
-    const std::string& noise_bin_path = {})
+    const std::string& noise_bin_path = {},
+    // The previous run's partition; see GenerateTemplatesFast.
+    bank_reload::SplitArchive* priorSplit = nullptr)
 {
     using namespace template_generation_detail;
 
     FastTemplateBuild out;
-    out.info = GenerateTemplatesFast(peakResults, rates, noise_bin_path);
+    out.info = GenerateTemplatesFast(peakResults, rates, noise_bin_path, priorSplit);
 
     out.tmpl.bins.resize(peakResults.size());
     for (size_t i = 0; i < peakResults.size(); ++i) {
@@ -209,12 +211,20 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
     // Present-only; a channel with rate=0 in SignalRates yields an empty
     // result and is silently skipped when packed into the bins.
     {
+        // One shared arterial lag: the three share one acquisition path.
         auto abp = CreatePulseTemplates(
-            peakResults, &output_binfile_data::abpSignal, rates.ecg, rates.abp);
+            peakResults, &output_binfile_data::abpSignal, rates.ecg, rates.abp,
+            rates.arterial_lag_ms);
         auto art = CreatePulseTemplates(
-            peakResults, &output_binfile_data::artSignal, rates.ecg, rates.art);
+            peakResults, &output_binfile_data::artSignal, rates.ecg, rates.art,
+            rates.arterial_lag_ms);
         auto artp = CreatePulseTemplates(
-            peakResults, &output_binfile_data::artPulmSignal, rates.ecg, rates.artPulm);
+            peakResults, &output_binfile_data::artPulmSignal, rates.ecg, rates.artPulm,
+            rates.arterial_lag_ms);
+        // Their transit times, beside PPG's; written once, in prepare.
+        if (rates.abp > 0.0)     ptt_log::stashTransit("ABP", abp.ptt);
+        if (rates.art > 0.0)     ptt_log::stashTransit("ART", art.ptt);
+        if (rates.artPulm > 0.0) ptt_log::stashTransit("ART_PULM", artp.ptt);
         for (size_t i = 0; i < out.tmpl.bins.size(); ++i) {
             if (out.tmpl.bins[i].bad_segment) continue;
             // THE R COLUMN TRAVELS WITH THE WAVEFORM. Each arterial channel
@@ -293,6 +303,7 @@ inline const char* anchorName_bt(AnchorType a) {
     case AnchorType::P_ONSET: return "P_ONSET";
     case AnchorType::Q_ONSET: return "Q_ONSET";
     case AnchorType::J_POINT: return "J_POINT";
+    case AnchorType::T_END:   return "T_END";
     }
     return "?";
 }
@@ -342,6 +353,14 @@ inline void alignTemplatesFromCache(template_structs::TemplateFile& tmpl, templa
     // column now always comes from the median template, so there is no
     // recovery to report.
     std::atomic<int> nNoAlign{ 0 };     // nothing moved: this bin equals R
+
+    // This anchor's half of <stem>_beat_moves.csv: every kept row's horizontal
+    // shift, [bin][channel][row]. Sized here, single-threaded, so the parallel
+    // loop below only ever writes its own (bin, channel) element. Not for the
+    // scoring pass, whose alignment is a re-run of one already logged.
+    std::vector<std::array<std::vector<double>, 3>>* moveLog = forScoring
+        ? nullptr
+        : ecg_move_log::horizontal_bins(anchor_view::label(anchor), tmpl.bins.size());
 
     for (const auto& ch : channels) {
         auto it = beats.per_channel_beats.find(ch.key);
@@ -455,8 +474,15 @@ inline void alignTemplatesFromCache(template_structs::TemplateFile& tmpl, templa
                 // Same floor the bank groups on -- one config value, one
                 // meaning: does this beat correlate with this template.
                 tbank::morphThresholdEcg(),
-                exclRows.empty() ? nullptr : &exclRows);
+                exclRows.empty() ? nullptr : &exclRows,
+                anchor_view::shiftWindow(anchor).half_ms,
+                anchor_view::shiftWindow(anchor).max_lag_ms);
             if (q.tmpl.empty()) continue;
+
+            // Rows of q.shifts are perBin[i]'s rows: the kept rows the move log
+            // joins on. Copied, because q is still read below.
+            if (moveLog && (size_t)i < moveLog->size())
+                (*moveLog)[i][ch.chIdx] = q.shifts;
 
             // DID ANY BEAT ACTUALLY MOVE? This is the only real failure
             // signal. align_beat_matrix wraps its whole shift loop in
@@ -464,16 +490,16 @@ inline void alignTemplatesFromCache(template_structs::TemplateFile& tmpl, templa
             // template that is byte-identical to R -- so counting non-empty
             // templates cannot detect it.
             //
-            // Not a median shift: the reference IS the median snippet, so the
-            // median shift is zero by design, and a sub-sample shift never
-            // appears in an integer median at all.
+            // READ OFF THE SHIFTS IT APPLIED, not re-derived. This used to run
+            // the full landmark locator on every beat to compare with the
+            // template's -- a curve-fit landmark search per beat per bin per
+            // lead, and for T_END that is a J-point AND a T-end fit per beat.
+            // It also measured the wrong thing: whether the beats' landmarks
+            // differ, not whether the alignment moved them.
             {
-                const double m0 = locate(ref_beat_of_median_length);
                 bool anyMoved = false;
-                for (const auto& bt : perBin[i]) {
-                    const double mi = locate(bt);
-                    if (mi >= 0.0 && std::abs(m0 - mi) >= 1e-3) { anyMoved = true; break; }
-                }
+                for (const double sh : q.shifts)
+                    if (std::isfinite(sh) && std::abs(sh) >= 1e-3) { anyMoved = true; break; }
                 if (!anyMoved) ++nNoAlign;
             }
 

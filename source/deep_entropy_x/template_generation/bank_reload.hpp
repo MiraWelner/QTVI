@@ -4,6 +4,38 @@
 // if a user marked the templates, the template markings are reloaded. but maybe the config file or algorithm changes - then the bins get recalculated 
 // and the markings are wrong. This file reloads the old templates which were split however they were when the user made the markings.
 //
+// ---- WHEN A PRIOR PARTITION IS RELOADED, AND WHEN IT IS NOT -----------------
+//
+// PER BIN, AND ONLY WHEN BOTH ARE TRUE:
+//
+//   1. THE OPERATOR RULED ON IT. At least one of the bin's prior templates, on
+//      any channel, carries an operator verdict: confirmed, crossed out, or
+//      marked bad. A bin nobody reviewed has nothing worth preserving, so it
+//      takes the fresh partition -- which is what a config change is for.
+//
+//   2. THE SLICING IS UNCHANGED. Members are LOCAL ROWS of each channel's kept
+//      beats, so they only name the same heartbeats if the bin was sliced from
+//      the same R-peaks and kept the same beats. Checked against a fingerprint
+//      of exactly that, written beside the archive (<stem>_slicing.bin) by the
+//      run that produced it. No fingerprint, or a different one, is a changed
+//      slicing: a prior partition applied to different rows is a partition of
+//      a different population, and it looks identical to a correct one.
+//
+// IN EVERY OTHER CASE THE BIN IS REPARTITIONED -- including an archive from a
+// build that predates the fingerprint, which therefore repartitions once and
+// reloads exactly from then on.
+//
+// WHOLE BINS. The four channels of a bin are faces of ONE joint partition
+// (template i of each channel is group i), so a bin is reloaded on every
+// channel or on none: a bin whose ECG came back from the archive and whose
+// pulse was freshly split would pair groups that are not the same heartbeats.
+//
+// APPLIED INSIDE THE BUILD, BEFORE <stem>_templates.bin IS WRITTEN. The build
+// rewrites that archive, and the commit after the session patches only the
+// operator's verdict into it. Applied after the write, the archive on disk
+// would hold the FRESH members under the reloaded verdicts, and the next run
+// would reload a partition the operator never saw. See GenerateTemplatesFast.
+//
 
 #include <array>
 #include <cstdint>
@@ -16,10 +48,115 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <functional>
 
 namespace bank_reload {
 
+    // =======================================================================
+    // THE SLICING FINGERPRINT: <stem>_slicing.bin
+    // =======================================================================
+    //
+    // One 64-bit hash per bin over everything that decides which heartbeat a
+    // member index names: the bin's R-peaks (ch1.raw, which drives every
+    // channel's slicer), the ECG and pulse rates, and each channel's kept-row
+    // -> R-pair map. Equal hashes mean local row k of every channel is the same
+    // heartbeat, sliced from the same samples, in both runs.
+    //
+    // 0 IS "NOT FINGERPRINTED" (a bad segment, or a bin with no R-peaks), and
+    // never matches -- so such a bin always repartitions.
+    //
+    // Layout: 8-byte magic, uint32 version, uint64 bin count, then one uint64
+    // per bin. Small, and read whole.
+    namespace slicing {
 
+        inline constexpr char kMagic[8] = { 'S','L','I','C','E','F','P','1' };
+        inline constexpr uint32_t kVersion = 1;
+
+        struct Hasher {
+            uint64_t h = 1469598103934665603ull;   // FNV-1a 64 offset basis
+            void bytes(const void* p, std::size_t n) {
+                const unsigned char* c = static_cast<const unsigned char*>(p);
+                for (std::size_t i = 0; i < n; ++i) { h ^= c[i]; h *= 1099511628211ull; }
+            }
+            void u64(uint64_t v) { bytes(&v, sizeof v); }
+            void f64(double v) { bytes(&v, sizeof v); }
+        };
+
+        // ecgKept[c] / ppgKept: kept row -> R-pair ordinal for that channel,
+        // or null when the channel has none in this bin. Lengths are hashed
+        // with the contents, so an absent channel and an empty one agree and
+        // neither collides with a present one.
+        inline uint64_t hashBin(const std::vector<size_t>& rPeaks,
+            double ecgRate, double ppgRate,
+            const std::array<const std::vector<size_t>*, 3>& ecgKept,
+            const std::vector<uint32_t>* ppgKept)
+        {
+            if (rPeaks.size() < 2) return 0;
+            Hasher hs;
+            hs.f64(ecgRate);
+            hs.f64(ppgRate);
+            hs.u64(rPeaks.size());
+            for (const size_t r : rPeaks) hs.u64(r);
+            for (int c = 0; c < 3; ++c) {
+                hs.u64(0xEC60ull + static_cast<uint64_t>(c));   // channel tag
+                const std::vector<size_t>* k = ecgKept[c];
+                hs.u64(k ? k->size() : 0);
+                if (k) for (const size_t v : *k) hs.u64(v);
+            }
+            hs.u64(0x9960ull);                                   // pulse tag
+            hs.u64(ppgKept ? ppgKept->size() : 0);
+            if (ppgKept) for (const uint32_t v : *ppgKept) hs.u64(v);
+            return (hs.h == 0) ? 1 : hs.h;   // 0 is reserved for "none"
+        }
+
+        // <stem>_templates.bin -> <stem>_slicing.bin, so the reader derives
+        // the fingerprint's path from the archive's and cannot look elsewhere.
+        inline std::string pathFor(const std::string& templatesPath) {
+            const std::string suf = "_templates.bin";
+            if (templatesPath.size() >= suf.size()
+                && templatesPath.compare(templatesPath.size() - suf.size(),
+                    suf.size(), suf) == 0)
+                return templatesPath.substr(0, templatesPath.size() - suf.size())
+                + "_slicing.bin";
+            return templatesPath + ".slicing";
+        }
+
+        inline bool write(const std::string& path, const std::vector<uint64_t>& perBin) {
+            std::ofstream f(path, std::ios::binary | std::ios::trunc);
+            if (!f) return false;
+            const uint64_t n = perBin.size();
+            f.write(kMagic, sizeof kMagic);
+            f.write(reinterpret_cast<const char*>(&kVersion), sizeof kVersion);
+            f.write(reinterpret_cast<const char*>(&n), sizeof n);
+            if (n) f.write(reinterpret_cast<const char*>(perBin.data()),
+                static_cast<std::streamsize>(n * sizeof(uint64_t)));
+            return f.good();
+        }
+
+        inline bool read(const std::string& path, std::vector<uint64_t>& out) {
+            out.clear();
+            std::ifstream f(path, std::ios::binary);
+            if (!f) return false;
+            char magic[8] = {};
+            uint32_t ver = 0;
+            uint64_t n = 0;
+            if (!f.read(magic, sizeof magic)
+                || !std::equal(magic, magic + 8, kMagic)) return false;
+            if (!f.read(reinterpret_cast<char*>(&ver), sizeof ver)
+                || ver != kVersion) return false;
+            if (!f.read(reinterpret_cast<char*>(&n), sizeof n)
+                || n > (1ull << 32)) return false;
+            out.resize(static_cast<size_t>(n));
+            if (n && !f.read(reinterpret_cast<char*>(out.data()),
+                static_cast<std::streamsize>(n * sizeof(uint64_t)))) {
+                out.clear();
+                return false;
+            }
+            return true;
+        }
+
+    }  // namespace slicing
 
 
     // =======================================================================
@@ -81,6 +218,16 @@ namespace bank_reload {
         size_t banks_restored = 0;       // (bin, channel) pairs
         size_t banks_skipped = 0;        // slot-count mismatch: left fresh
         size_t beats_restored = 0;       // member indices written back
+
+        // ---- THE TWO GATES (see the top of this file), counted per bin ----
+        bool fp_present = false;         // <stem>_slicing.bin exists
+        bool fp_read = false;            // ...and parsed
+        std::string fp_path;
+        size_t bins_with_prior = 0;      // bins the archive has templates for
+        size_t bins_reloaded = 0;
+        size_t bins_no_verdict = 0;      // nobody ruled on it: repartitioned
+        size_t bins_slicing_changed = 0; // fingerprint differs or is absent
+        size_t bins_slot_mismatch = 0;   // fresh bank too small on a channel
     };
 
     namespace detail {
@@ -124,6 +271,9 @@ namespace bank_reload {
     struct SplitArchive {
         SplitReport rep;
         std::vector<templates_io::BinBlock<templates_io::TemplateRecord>> blocks;
+        // The PREVIOUS run's slicing fingerprint, read with the archive and for
+        // the same reason: the build rewrites both.
+        std::vector<uint64_t> prior_fp;
 
         // True when there is something to apply. A first run has no archive and
         // this is false, which is the normal case and not an error.
@@ -139,6 +289,13 @@ namespace bank_reload {
         std::error_code ec;
         rep.prior_present = std::filesystem::exists(priorPath, ec) && !ec;
         if (!rep.prior_present) return out;
+
+        // The fingerprint FIRST, before any early return below: it is read now
+        // or never, because the build overwrites it.
+        rep.fp_path = slicing::pathFor(priorPath);
+        rep.fp_present = std::filesystem::exists(rep.fp_path, ec) && !ec;
+        if (rep.fp_present)
+            rep.fp_read = slicing::read(rep.fp_path, out.prior_fp);
 
         if (!templates_io::readTemplatesBin(priorPath, out.blocks)) {
             // NO MAGIC TO BE WRONG. This file has never had one -- see the
@@ -188,61 +345,99 @@ namespace bank_reload {
         return out;
     }
 
-    // Call AFTER the build, with what readSplit returned.
-    inline SplitReport applySplit(SplitArchive& arch,
-        template_structs::TemplateFile& fresh)
+    // A verdict the operator made on one prior template: confirmed, crossed
+    // out, or marked bad on either channel.
+    inline bool hasOperatorVerdict(const templates_io::detail::TemplateTrailer& tr) {
+        return tr.confirmed_by_operator != 0
+            || tr.marked_invalid_template != 0
+            || tr.operator_state != tbank::template_of_all_signals::kOperatorGood;
+    }
+
+    // Call INSIDE THE BUILD, after the fresh partition exists and BEFORE
+    // <stem>_templates.bin is written -- see the top of this file.
+    //
+    // bankOf(bin, c) is the fresh bank for channel c (0-2 ECG, 3 pulse), or
+    // null where the build has none. freshFp is this run's fingerprint per bin
+    // (slicing::hashBin), in the same bin order as the archive.
+    inline SplitReport applySplit(SplitArchive& arch, size_t nBins,
+        const std::function<tbank::TemplateBank* (size_t, int)>& bankOf,
+        const std::vector<uint64_t>& freshFp)
     {
         SplitReport rep = arch.rep;
-        if (!arch.usable()) return rep;
+        // Counts are this application's, not carried from an earlier one.
+        rep.templates_restored = rep.banks_restored = rep.banks_skipped = 0;
+        rep.beats_restored = 0;
+        rep.bins_with_prior = rep.bins_reloaded = rep.bins_no_verdict = 0;
+        rep.bins_slicing_changed = rep.bins_slot_mismatch = 0;
+        if (!arch.usable()) { arch.rep = rep; return rep; }
         const auto& blocks = arch.blocks;
+
+        // ---- WHICH BINS THE ARCHIVE SPEAKS FOR, AND WHAT IT SAYS ----------
+        //
+        // Records are flat: one per (bin, template), in bin order but with no
+        // per-bin header. So the highest template_id per (bin, channel) is what
+        // says how many slots the prior partition had.
+        std::vector<char> hasPrior(nBins, 0), verdict(nBins, 0);
+        std::vector<std::array<int, 4>> needSlots(nBins, { -1, -1, -1, -1 });
+        for (const auto& blk : blocks) {
+            const int c = detail::channelIndexOf(blk.channel);
+            if (c < 0) continue;
+            for (size_t k = 0; k < blk.records.size(); ++k) {
+                const auto& rec = blk.records[k];
+                if (rec.bin >= nBins || rec.template_id < 0) continue;
+                hasPrior[rec.bin] = 1;
+                needSlots[rec.bin][c] = std::max(needSlots[rec.bin][c],
+                    static_cast<int>(rec.template_id));
+                if (k < blk.trailers.size() && hasOperatorVerdict(blk.trailers[k]))
+                    verdict[rec.bin] = 1;
+            }
+        }
+
+        // ---- THE GATES, PER BIN, ALL CHANNELS OR NONE ---------------------
+        std::vector<char> take(nBins, 0);
+        for (size_t b = 0; b < nBins; ++b) {
+            if (!hasPrior[b]) continue;
+            ++rep.bins_with_prior;
+            if (!verdict[b]) { ++rep.bins_no_verdict; continue; }
+
+            const bool sameSlicing = rep.fp_read
+                && b < arch.prior_fp.size() && b < freshFp.size()
+                && arch.prior_fp[b] != 0 && arch.prior_fp[b] == freshFp[b];
+            if (!sameSlicing) { ++rep.bins_slicing_changed; continue; }
+
+            bool slotsOk = true;
+            for (int c = 0; c < 4 && slotsOk; ++c) {
+                if (needSlots[b][c] < 0) continue;
+                const tbank::TemplateBank* bank = bankOf(b, c);
+                const int have = bank ? static_cast<int>(bank->templates.size()) : 0;
+                if (have <= needSlots[b][c]) {
+                    slotsOk = false;
+                    std::fprintf(stderr,
+                        "  [split-reload] bin %zu channel %d: prior split names slot %d"
+                        " but the fresh bank has %d -- bin left freshly split\n",
+                        b, c, needSlots[b][c], have);
+                }
+            }
+            if (!slotsOk) { ++rep.bins_slot_mismatch; continue; }
+
+            take[b] = 1;
+            ++rep.bins_reloaded;
+            for (int c = 0; c < 4; ++c) if (needSlots[b][c] >= 0) ++rep.banks_restored;
+        }
 
         for (const auto& blk : blocks) {
             const int c = detail::channelIndexOf(blk.channel);
             if (c < 0) continue;
 
-            // ---- WHICH BINS, AND HOW MANY SLOTS EACH HAD ---------------
-            //
-            // Records are flat: one per (bin, template), in bin order but with
-            // no per-bin header. So the highest template_id per bin is what
-            // says how many slots the prior partition had, and it has to be
-            // known before anything is written -- a bin is reloaded whole or
-            // not at all: a partially reloaded bank is a partition of no population.
-            std::vector<int> needSlots(fresh.bins.size(), -1);
-            for (const auto& rec : blk.records) {
-                if (rec.bin >= fresh.bins.size()) continue;
-                if (rec.template_id < 0) continue;
-                needSlots[rec.bin] = std::max(needSlots[rec.bin],
-                    static_cast<int>(rec.template_id));
-            }
-
-            std::vector<char> take(fresh.bins.size(), 0);
-            for (size_t b = 0; b < fresh.bins.size(); ++b) {
-                if (needSlots[b] < 0) continue;   // no prior templates here
-                const tbank::TemplateBank& bank = (c < 3)
-                    ? fresh.bins[b].ecg_bank[c] : fresh.bins[b].ppg_bank;
-                if (static_cast<int>(bank.templates.size()) > needSlots[b]) {
-                    take[b] = 1;
-                    ++rep.banks_restored;
-                }
-                else {
-                    ++rep.banks_skipped;
-                    std::fprintf(stderr,
-                        "  [split-reload] bin %zu %s: prior split names slot %d"
-                        " but the fresh bank has %zu -- left freshly split\n",
-                        b, blk.channel.c_str(), needSlots[b],
-                        bank.templates.size());
-                }
-            }
-
             for (size_t k = 0; k < blk.records.size(); ++k) {
                 const auto& rec = blk.records[k];
-                if (rec.bin >= fresh.bins.size()) continue;
+                if (rec.bin >= nBins) continue;
                 if (!take[rec.bin]) continue;
                 if (rec.template_id < 0) continue;
 
-                tbank::TemplateBank& bank = (c < 3)
-                    ? fresh.bins[rec.bin].ecg_bank[c]
-                    : fresh.bins[rec.bin].ppg_bank;
+                tbank::TemplateBank* bankP = bankOf(rec.bin, c);
+                if (!bankP) continue;                        // guarded by take[]
+                tbank::TemplateBank& bank = *bankP;
                 const size_t sl = static_cast<size_t>(rec.template_id);
                 if (sl >= bank.templates.size()) continue;   // guarded by take[]
                 tbank::template_of_all_signals& tp = bank.templates[sl];
@@ -295,6 +490,7 @@ namespace bank_reload {
             }
         }
 
+        arch.rep = rep;
         return rep;
     }
 
@@ -330,11 +526,27 @@ namespace bank_reload {
                 rep.prior_path.c_str(), rep.error.c_str());
             return;
         }
+        if (!rep.fp_read) {
+            // THE ARCHIVE IS FINE AND THE SLICING CANNOT BE VOUCHED FOR, which
+            // under the rule at the top of this file repartitions everything.
+            // Said loudly: if the prior run had operator verdicts, they are
+            // about to be dropped, and that has to be visible.
+            std::fprintf(out,
+                "  [split-reload] %s: no usable slicing fingerprint at %s (%s)"
+                " -- every bin repartitioned. %zu bin(s) had operator verdicts"
+                " that do NOT carry over. The next run reloads exactly.\n",
+                rep.prior_path.c_str(), rep.fp_path.c_str(),
+                rep.fp_present ? "unreadable" : "absent",
+                rep.bins_with_prior - rep.bins_no_verdict);
+            return;
+        }
         std::fprintf(out,
-            "  [split-reload] %s: %zu template(s) over %zu (bin,channel) bank(s),"
-            " %zu beat assignment(s) restored, %zu bank(s) left freshly split\n",
-            rep.prior_path.c_str(), rep.templates_restored, rep.banks_restored,
-            rep.beats_restored, rep.banks_skipped);
+            "  [split-reload] %s: %zu of %zu bin(s) reloaded (%zu template(s),"
+            " %zu beat assignment(s)); repartitioned: %zu with no operator"
+            " verdict, %zu with changed slicing, %zu with too few fresh slots\n",
+            rep.prior_path.c_str(), rep.bins_reloaded, rep.bins_with_prior,
+            rep.templates_restored, rep.beats_restored, rep.bins_no_verdict,
+            rep.bins_slicing_changed, rep.bins_slot_mismatch);
     }
 
 }  // namespace bank_reload

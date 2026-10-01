@@ -4,9 +4,9 @@
  *         the ECG acquisition path and EACH acquisition path it's paired
  *         against -- PPG on its own, and ABP/ART/ART_PULM as one shared
  *         arterial group (ABP is the representative channel measured; the
- *         resulting lag stands for all three, since they share one
+ *         resulting lag is applied to all three, since they share one
  *         acquisition path and hardware delay). PPG and the arterial group
- *         are measured INDEPENDENTLY -- their lags are not
+ *         are measured and applied INDEPENDENTLY -- their lags are not
  *         assumed equal.
  *
  *         Cross-correlates the R-peak event train against a foot-event
@@ -363,17 +363,20 @@ namespace channel_offset {
             std::fprintf(stderr, "[channel_offset] cannot open %s\n", path.c_str());
             return;
         }
-        // No `applied` column: the signals are never shifted, so there is
-        // nothing for it to say. used_for_window_display is what a confident
-        // lag is used for -- the pulse window and the viewer's display.
+        // `applied` KEEPS ITS MEANING: were the signals shifted by lag_ms. It
+        // is 0 on every row this build writes, because nothing is shifted any
+        // more. A log from an earlier build with applied = 1 marks a record
+        // whose outputs were measured on shifted signals -- the ones
+        // restore_chaos_lag.py adds the lag back to. used_for_window_display
+        // is what a confident lag is used for now.
         if (!append)
-            f << "stem,group,lag_ms,needs_manual_review,ratio,best_score,"
+            f << "stem,group,lag_ms,applied,needs_manual_review,ratio,best_score,"
             "n_r_peaks,n_feet,analyzed_sec,method,used_for_window_display\n";
-        f << g_stem << ',' << group << ',' << r.lag_ms << ','
+        f << g_stem << ',' << group << ',' << r.lag_ms << ",0,"
             << (r.ambiguous ? 1 : 0) << ',' << r.ratio << ',' << r.best_score << ','
             << r.n_r_peaks << ',' << r.n_feet << ',' << r.analyzed_sec << ','
             << methodName(static_cast<uint8_t>(LagMethod::RPEAK_FOOT_TRAIN_XCORR)) << ','
             << (r.ambiguous ? 0 : 1) << '\n';
     }
 
-}   // namespace channel_offset
+}   // namespace channel_offset#pragma once

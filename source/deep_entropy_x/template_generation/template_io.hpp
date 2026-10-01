@@ -10,7 +10,7 @@
  *           <stem>_templates.bin  one column per TEMPLATE  (binary)
  *
  *         _templates.bin is the only one of these that is READ BACK, and now
- *         the only one REWRITTEN. 
+ *         the only one REWRITTEN.
  */
 
 #include <algorithm>   // std::max, for the per-bin run length
@@ -26,15 +26,27 @@
 #include <vector>
 #include "stats_utils.hpp"
 #include "split_bins_to_templates.hpp"
+#include "peak_finding/channel_offset.hpp"   // RecordLag trailer
 
 namespace templates_io {
 
     inline std::string g_dir;
     inline std::string g_stem;
 
+    // The record's measured channel lags (channel_offset), appended to
+    // <stem>_templates.bin as a trailer when set. set() clears it, so one
+    // record's lag can never be written onto the next record's archive.
+    inline channel_offset::RecordLag g_lag;
+    inline bool g_have_lag = false;
+    inline void setRecordLag(const channel_offset::RecordLag& lag) {
+        g_lag = lag; g_have_lag = true;
+    }
+
     inline void set(const std::string& dir, const std::string& stem,
         const std::string& subdir = "") {
         g_stem = stem;
+        g_have_lag = false;
+        g_lag = channel_offset::RecordLag{};
         if (dir.empty()) { g_dir.clear(); return; }
         std::filesystem::path p(dir);
         if (!subdir.empty()) p /= subdir;
@@ -827,7 +839,9 @@ namespace templates_io {
         // fiducial. A 0 column carries a full row of NaN and is NOT an error.
         uint8_t  became_beat = 0;
         // jbank::ExcludeReason. 0 kept, 1 not_a_member, 2 premature, 3 vote,
-        // 4/5/6 Tukey r_location / amplitude / wave_score. This is the field
+        // 4/5/6 Tukey r_location / amplitude / wave_score, 7 category (an
+        // operator mark), 8 Tukey rr_length, 9 post_ectopic (the beat after an
+        // ectopic one). This is the field
         // that says a beat was excluded from its template's average WITHOUT
         // being removed from the record.
         uint8_t  excluded = 0;
@@ -1261,7 +1275,13 @@ namespace templates_io {
                 }
             }
         }
-        return static_cast<bool>(f);
+        if (!f) return false;
+        f.close();
+        // The record's lags, after the blocks; see channel_offset's trailer.
+        if (g_have_lag)
+            return channel_offset::appendTrailer(
+                g_dir + "/" + g_stem + "_templates.bin", g_lag);
+        return true;
     }
 
     // ---------------------------------------------------------------------
@@ -1618,6 +1638,18 @@ namespace templates_io {
             rep.error = "could not write " + tmp;
             std::filesystem::remove(tmp, ec);
             return rep;
+        }
+        // THE LAG TRAILER SURVIVES THE ROUND TRIP. readTemplatesBin parses the
+        // blocks only, so writing them back would drop it; it is read off the
+        // original and re-appended to the replacement before the rename.
+        {
+            channel_offset::RecordLag lag;
+            if (channel_offset::readTrailer(path, lag)
+                && !channel_offset::appendTrailer(tmp, lag)) {
+                rep.error = "could not carry the channel-lag trailer into " + tmp;
+                std::filesystem::remove(tmp, ec);
+                return rep;
+            }
         }
         std::filesystem::rename(tmp, path, ec);
         if (ec) {

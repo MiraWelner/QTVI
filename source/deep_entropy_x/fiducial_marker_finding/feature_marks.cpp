@@ -318,6 +318,104 @@ double FeatureMarks::find_q_onset(const std::vector<double>& v, double fs, int r
     return cl(scanLo);
 }
 
+// ---- T ONSET ---------------------------------------------------------------
+//
+// THE ST SEGMENT'S RIGHT EDGE, AND THE T BAND'S LEFT. There was no finder for
+// it, so every consumer that needed it left it at -1: the ST band came out
+// empty and the T band either vanished or silently started at J, swallowing
+// the ST segment.
+//
+// Same construction as the other onsets (Q onset, P begin): a transition fit
+// on the rising side of the wave, anchored at 10% of the way from the level it
+// rises FROM to its apex.
+//   * B, the level it rises from, is the ST level: the median of the first
+//     20 ms after J, so a sloped or shifted ST is the reference rather than
+//     the PQ baseline the T never returns to on an elevated ST.
+//   * E is the T apex: the sample furthest from B between J and T end, by
+//     distance, so an inverted T is found the same way.
+//   * The fit runs on [J, apex], so the only crossing it can find is the
+//     upslope's.
+// Bracketed by [J, apex] on the way out, so T onset can never precede the
+// QRS end or follow the T peak. A T apex within 4 samples of J (no ST
+// segment at all) returns J.
+double FeatureMarks::find_t_begin(const std::vector<double>& v, double fs, double j_point, double t_end,
+    upsample_for_fit::TransitionCandidates* candOut, curve_fit::FitMode mode) {
+    const int N = static_cast<int>(v.size());
+    if (N < 8 || !(fs > 0.0) || !(j_point >= 0.0) || !(t_end > j_point)) return -1.0;
+    const int lo = std::clamp(static_cast<int>(std::ceil(j_point)), 0, N - 1);
+    const int hiT = std::clamp(static_cast<int>(std::floor(t_end)), 0, N - 1);
+    if (hiT - lo < 6) return -1.0;
+
+    std::vector<double> st;
+    const int stHi = std::min(hiT, lo + std::max(2, static_cast<int>(std::lround(0.020 * fs))));
+    for (int i = lo; i <= stHi; ++i) if (std::isfinite(v[i])) st.push_back(v[i]);
+    if (st.empty()) return -1.0;
+    std::nth_element(st.begin(), st.begin() + st.size() / 2, st.end());
+    const double B = st[st.size() / 2];
+
+    int ePos = lo; double bestDist = 0.0;
+    for (int i = lo; i <= hiT; ++i) {
+        if (!std::isfinite(v[i])) continue;
+        const double d = std::abs(v[i] - B);
+        if (d > bestDist) { bestDist = d; ePos = i; }
+    }
+    if (ePos - lo < 4 || !(bestDist > 0.0)) return static_cast<double>(lo);
+
+    const double tb = upsample_for_fit::upsample_transition_and_curve_fit(
+        v, (lo + ePos) / 2, 0.10, 40, B, lo, ePos, candOut, mode);
+    if (!std::isfinite(tb)) return -1.0;
+    return std::clamp(tb, static_cast<double>(lo), static_cast<double>(ePos));
+}
+
+// ---- WHERE THE NEXT BEAT'S R IS IN A TEMPLATE, or -1 --------------------
+//
+// For find_t_end's ceiling. A template runs from R - 0.5 RR to R + 1.4 RR, so
+// the next beat's QRS is in it; finding it is what lets the T window follow
+// the rate without being told the RR.
+//
+// "IS THIS THE NEXT R OR A TALL T?" is the whole difficulty, and width is the
+// answer: a QRS is narrow, a T wave is not. A candidate must
+//   * stand at least half as far from the PQ baseline as this beat's R does,
+//     in either direction (polarity-free: an inverted lead works the same);
+//   * be at least 250 ms after this R (no QRS follows that closely); and
+//   * fall back below a quarter of that height within 60 ms on both sides.
+// A T wave tall enough to pass the first test fails the third.
+static int nextRColumn(const std::vector<double>& v, double fs, int r_col)
+{
+    const int N = static_cast<int>(v.size());
+    if (r_col < 0 || r_col >= N || !(fs > 0.0)) return -1;
+    auto ms = [&](double s) { return static_cast<int>(std::lround(s * fs)); };
+
+    // PQ baseline: the median of 80..20 ms before R, the segment the build
+    // levels every beat on.
+    std::vector<double> pq;
+    for (int i = std::max(0, r_col - ms(0.080)); i <= std::max(0, r_col - ms(0.020)); ++i)
+        if (i < N && std::isfinite(v[i])) pq.push_back(v[i]);
+    if (pq.empty() || !std::isfinite(v[r_col])) return -1;
+    std::nth_element(pq.begin(), pq.begin() + pq.size() / 2, pq.end());
+    const double base = pq[pq.size() / 2];
+    const double rAmp = std::abs(v[r_col] - base);
+    if (!(rAmp > 0.0)) return -1;
+
+    const int half = std::max(2, ms(0.060));
+    for (int i = r_col + ms(0.250); i < N; ++i) {
+        if (!std::isfinite(v[i]) || std::abs(v[i] - base) < 0.5 * rAmp) continue;
+        // The local apex of this excursion, within 40 ms.
+        int pk = i;
+        for (int k = i; k < std::min(N, i + ms(0.040)); ++k)
+            if (std::isfinite(v[k]) && std::abs(v[k] - base) > std::abs(v[pk] - base)) pk = k;
+        const double h = std::abs(v[pk] - base);
+        auto dropsBy = [&](int from, int step) {
+            for (int k = from, n = 0; k >= 0 && k < N && n <= half; k += step, ++n)
+                if (std::isfinite(v[k]) && std::abs(v[k] - base) < 0.25 * h) return true;
+            return false;
+            };
+        if (dropsBy(pk, -1) && dropsBy(pk, +1)) return pk;
+        i = pk + half;   // a broad excursion (a T wave): skip past it
+    }
+    return -1;
+}
+
 double FeatureMarks::find_t_end(const std::vector<double>& v, double fs, int r_col, double j_point,
     upsample_for_fit::TransitionCandidates* candOut, curve_fit::FitMode mode) {
     const int N = static_cast<int>(v.size());
@@ -325,10 +423,36 @@ double FeatureMarks::find_t_end(const std::vector<double>& v, double fs, int r_c
     auto cl = [&](int i) { return std::clamp(i, 0, N - 1); };
     auto cld = [&](double d) { return std::clamp(d, 0.0, static_cast<double>(N - 1)); };
 
-    // Window: [T-begin + 100 ms, T-begin + 350 ms], so the landmark chain runs
-    // J-point -> T-begin -> T-end, each bounding the next.
+    // ---- THE WINDOW: [J + 100 ms, the earlier of J + 700 ms and P's room] ----
+    //
+    // IT WAS [J + 100 ms, J + 350 ms], which CLIPPED LONG QT. With J about
+    // 100 ms after Q onset, a 350 ms ceiling puts T end no later than ~QT
+    // 450 ms, and a longer QT had its T end forced into the window: the right
+    // edge -- which is also B, the baseline the fit levels to -- then sat on
+    // the T wave itself, and the detection landed somewhere up its downslope.
+    // A prolonged QT, which is the case worth measuring, read as normal.
+    //
+    // THE CEILING IS NOW J + 700 ms (QT to roughly 800 ms) OR THE NEXT BEAT,
+    // WHICHEVER COMES FIRST. T must end before the next P wave starts, and a
+    // fixed 700 ms would run into it at fast rates (next R 600 ms after this
+    // one). The template carries the next R -- it runs to R + 1.4 RR -- so it
+    // is found here (see nextRColumn) and the ceiling kept 250 ms short of it:
+    // P onset sits PR + Q-to-R before the next R, 160 to 240 ms, and the
+    // ceiling is also B, so it must not reach the P wave's upslope. Where no next R is found the fixed ceiling
+    // stands, trimmed to the template's last real sample so B is never NaN
+    // padding.
+    const int lastFin = sample_extent::lastFinite(v);
+    if (lastFin < 0) return -1.0;
     const int lo0 = cl(static_cast<int>(std::lround(j_point + 0.100 * fs)));
-    const int hi = cl(static_cast<int>(std::lround(j_point + 0.350 * fs)));
+    int hi = std::min(lastFin,
+        cl(static_cast<int>(std::lround(j_point + 0.700 * fs))));
+    {
+        const int nr = nextRColumn(v, fs, r_col);
+        if (nr > 0) {
+            const int room = nr - static_cast<int>(std::lround(0.250 * fs));
+            hi = std::min(hi, room);
+        }
+    }
     if (hi <= lo0 + 3) return cld(j_point);
 
     // B = post-T baseline at the right edge. E = the extremum in the window, by
@@ -348,11 +472,45 @@ double FeatureMarks::find_t_end(const std::vector<double>& v, double fs, int r_c
     const double E = v[ePos];
 
     if (std::isnan(B) || std::isnan(E)) return -1.0;
-    auto fit = curve_fit::selectBestFit(v, lo, hi);
-    const double af = curve_fit::anchorAtFraction(fit, lo, hi, B, E, 0.02);
+
+    // ---- THE FIT WINDOW ENDS WHERE THE T WAVE DOES, not at the ceiling ----
+    //
+    // The ceiling above is only how far T end MAY be, and it is also B. The
+    // fits cost far more than linearly in the window (two of them, four
+    // models each, then the upsampled pass), and widening the ceiling from
+    // J + 350 to J + 700 ms made every T-end detection about ten times slower
+    // -- and detect_template_landmarks runs once per panel when a page opens.
+    // Most of that extra span is flat TP baseline after the wave has ended,
+    // which tells a fit nothing.
+    //
+    // So the window stops 80 ms after the downslope has SETTLED: the first
+    // point from which the trace stays within 5% of the apex height of B for
+    // 40 ms. 5%, not the 2% the anchor is placed at, so template noise of a
+    // few microvolts on a small T cannot keep it from ever settling; the 80 ms
+    // margin is what still puts the 2% crossing, which lies past the 5% one,
+    // well inside the window. "Stays", not "touches", so a biphasic T that crosses the baseline
+    // on its way to a second lobe keeps the second lobe. A long QT moves this
+    // point out with it, so nothing is clipped; where it never settles the
+    // window runs to the ceiling as before.
+    int fitHi = hi;
+    {
+        const double band = 0.05 * std::abs(E - B);
+        const int hold = std::max(2, static_cast<int>(std::lround(0.040 * fs)));
+        const int margin = std::max(2, static_cast<int>(std::lround(0.080 * fs)));
+        for (int i = ePos + 1; i + hold <= hi; ++i) {
+            bool settled = true;
+            for (int k = i; k <= i + hold; ++k)
+                if (std::isfinite(v[k]) && std::abs(v[k] - B) > band) { settled = false; i = k; break; }
+            if (settled) { fitHi = std::min(hi, i + margin); break; }
+        }
+        if (fitHi <= lo + 3) fitHi = hi;
+    }
+
+    auto fit = curve_fit::selectBestFit(v, lo, fitHi);
+    const double af = curve_fit::anchorAtFraction(fit, lo, fitHi, B, E, 0.02);
     if (!std::isfinite(af)) return -1.0;
     const int seed = std::clamp(static_cast<int>(std::round(af)), 0, N - 1);
-    const double te = upsample_for_fit::upsample_transition_and_curve_fit(v, seed, 0.02, 40, B, lo, hi, candOut, mode);
+    const double te = upsample_for_fit::upsample_transition_and_curve_fit(v, seed, 0.02, 40, B, lo, fitHi, candOut, mode);
     if (!std::isfinite(te)) return -1.0;
     return cld(te);
 }
@@ -409,6 +567,14 @@ AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
         // find_p_begin detects the P peak itself, so this is one call.
         return [r_col, fs](const std::vector<double>& b) {
             return FeatureMarks::find_p_begin(b, fs, r_col, 1.0);
+            };
+    case AnchorType::T_END:
+        // The landmark chain the template detector runs: J bounds the T
+        // search, so T end is found from this beat's own J.
+        return [r_col, fs](const std::vector<double>& b) {
+            const double j = FeatureMarks::find_j_point(b, fs, r_col, 1.0);
+            if (!(j >= 0.0)) return -1.0;
+            return FeatureMarks::find_t_end(b, fs, r_col, j);
             };
     }
     return [](const std::vector<double>&) { return -1.0; };
