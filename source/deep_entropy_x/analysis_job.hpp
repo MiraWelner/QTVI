@@ -84,6 +84,17 @@ namespace analysis_job {
         // move log -- before the viewer opens. Read by the viewer to draw an
         // individual beat on an anchored average's own frame.
         std::map<int, std::vector<std::array<std::vector<double>, 3>>> ecgRowShifts;
+        // The PPG slicer's per-beat landmarks, [bin][beat] in slice order, for
+        // the transit columns of <stem>_peak_locations_all_beats.csv. Copied out
+        // of ptt_log's stash in prepare: finalize writes the CSV later, and the
+        // next record's prepare clears the stash.
+        std::vector<std::vector<ptt_log::Beat>> ppgTransit;
+        // The ECG move log's vertical half -- per lead, per bin, per beat the
+        // raw method sliced: TP / PQ shifts, kept row, R-pair ordinal. With
+        // ecgRowShifts (the horizontal half) it is the whole of what
+        // <stem>_ecg_alignment_shifts.csv carried; both now go into the
+        // peak-locations CSV instead, written from commit.
+        std::array<std::vector<ecg_move_log::VerticalBin>, 3> ecgVertical;
     };
 
 
@@ -361,7 +372,7 @@ namespace analysis_job {
 
             const int tag = static_cast<int>(a);
 
-            // This anchor's per-row shifts, before ecg_move_log::write clears them.
+            // This anchor's per-row shifts, before the move-log store is cleared.
             for (const ecg_move_log::HorizontalAnchor& h : ecg_move_log::g_horizontal)
                 if (h.label == anchor_view::label(a)) { job.ecgRowShifts[tag] = h.bins; break; }
 
@@ -376,11 +387,16 @@ namespace analysis_job {
                 job.tmpl.bank_anchors[tag] = std::move(bit->second);
         }
 
-        // <stem>_beat_moves.csv, now that both halves exist: the vertical
-        // shifts the fast build stashed, and every anchor's horizontal ones.
-        ecg_move_log::write(job.rates.ecg);
+        // NO <stem>_ecg_alignment_shifts.csv: both halves of it -- the vertical
+        // shifts the fast build stashed, and every anchor's horizontal ones
+        // (ecgRowShifts, above) -- are kept on the job for the peak-locations
+        // CSV. Cleared here so nothing carries into the next record.
+        job.ecgVertical = ecg_move_log::g_vertical;
+        ecg_move_log::reset();
         // Every pulse channel's transit times, stashed by the build.
         ptt_log::writeTransit();
+        for (const auto& [chan, perBin] : ptt_log::g_transit)
+            if (chan == "PPG") { job.ppgTransit = perBin; break; }
 
         std::cerr.flush();
         return job;
@@ -408,12 +424,10 @@ namespace analysis_job {
             std::cout << "Processing Squared and Absolute Value Templates (slow) for " << job.stem << "\n";
             augment_ecg_ppg_pairs_sqabs(job.peakResults, job.fileID, job.samplingRate, job.cfg);
 
-            // Below augment, so all 9 channel x method blocks are populated in
-            // both files rather than just the 3 raw ones.
+            // Below augment, so all 9 channel x method blocks are populated.
+            // The CSV twin of this file is written from commit, once the
+            // operator's pulse alignments exist (see writePeakLocationsCsv).
             write_output_binfile(job.rPeakPath.string(), job.peakResults);
-            const std::filesystem::path rPeakCsv =
-                std::filesystem::path(job.cfg.r_peak_data_path) / (job.stem + "_peak_locations_all_beats.csv");
-            write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID, job.samplingRate);
 
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
             premark::runAll(job.beats, job.tmpl, job.rates.ecg, pol, job.cfg.training_log, job.stem);
@@ -433,6 +447,351 @@ namespace analysis_job {
         tbank::TemplateBank                ppg_bank;
     };
 
+    // ---- EVERY BEAT'S ALIGNMENT MOVES, AS PEAK-LOCATIONS COLUMNS ----------
+    //
+    // What <stem>_ecg_alignment_shifts.csv, <id>_ppg_alignment_shifts.csv and
+    // <stem>_ptt.csv carried, one row per beat, keyed on the beat's R-pair
+    // ordinal -- the row of ch1_r in the peak-locations CSV, the key every
+    // channel's slicer shares.
+    //
+    // ECG, per lead L (ch1..ch3), for every beat that lead sliced:
+    //   chL_kept              KEPT when the beat is in its template's average,
+    //                         otherwise WHY it is not (see verdictOf below)
+    //   chL_template          name of the lead's template whose members hold
+    //                         the beat, as the viewer titles it (PQRST_A,
+    //                         PVC_B, ...); blank for a NOT KEPT beat
+    //   chL_tp_mv_shift, chL_pq_mv_shift   amount SUBTRACTED by each leveling pass
+    //   chL_<A>_align_ms_shift   per alignment A: the sub-sample shift applied
+    //                         to put the beat's landmark on the template's, ms,
+    //                         POSITIVE = LATER
+    //
+    // PULSE, for every beat whose pulse the slicer could measure:
+    //   ppg_kept              the same verdict for the pulse, from the pulse
+    //                         partition's own fences; PULSE_QC when the pulse
+    //                         failed the correlation floor before any template
+    //   ptt_peak_ms, ptt_t50_ms   R to systolic peak / to 50% point
+    // and for every beat in a pulse template's cohort (members_clean, else
+    // members), from the operator's final banks:
+    //   ppg_template          the pulse template's name
+    //   ppg_row               local pulse row
+    //   ppg_percent_upstroke_used_for_alignment   how far up _F levelled
+    //   ppg_foot_location_ms / ppg_peak_location_ms   this beat's own landmark,
+    //                         ms from the start of the beat frame
+    //   ppg_foot_horizontal_shift_ms / ppg_peak_horizontal_shift_ms   that
+    //                         landmark minus the stack's median, ms
+    //   ppg_foot_vertical_shift / ppg_peak_vertical_shift   amount subtracted to
+    //                         level the beat, raw pulse units
+    // Blank where a value does not exist for that beat.
+
+    // ---- ONE BEAT'S VERDICT: KEPT, OR WHY NOT ------------------------------
+    //
+    // KEPT means in its template's average (members_clean, or every member when
+    // nothing was excluded). Otherwise, the first reason that applies:
+    //   NOT_LEVELLED   ECG only: the raw method could not level the beat's
+    //                  baseline, so it never reached a template
+    //   PULSE_QC       PPG only: the pulse failed the correlation floor
+    //   NO_PULSE_ROW   PPG only: passed the QC yet has no row in the bin's
+    //                  pulse beat matrix -- should not happen; not a verdict
+    //   UNSCORABLE     no template could score the beat (too little of it
+    //                  overlaps a template's axis), so none claimed it
+    //   SPAWN_LIMIT    the bin had already spawned its limit of templates
+    //                  when this beat matched none of them
+    //   CATEGORY, POST_ECTOPIC, PREMATURE, VOTE, TUKEY_RR_LENGTH,
+    //   TUKEY_R_LOCATION, TUKEY_AMPLITUDE, TUKEY_WAVE_SCORE
+    //                  the build's own exclusion (jbank::ExcludeReason, from
+    //                  cleanGroups), per slice
+    //   OPERATOR       out of the average in the operator's final banks with no
+    //                  build reason on record -- an edit made in the viewer
+    // The final banks decide IN or OUT; the build's record supplies the reason.
+    // So a viewer edit can never leave a beat labelled KEPT that is not
+    // averaged, or labelled excluded that is.
+    inline std::string excludeReasonName(uint8_t r)
+    {
+        switch (static_cast<jbank::ExcludeReason>(r)) {
+        case jbank::ExcludeReason::KEPT:             return "KEPT";
+        case jbank::ExcludeReason::NOT_A_MEMBER:     return "NOT_A_MEMBER";
+        case jbank::ExcludeReason::PREMATURE:        return "PREMATURE";
+        case jbank::ExcludeReason::VOTE:             return "VOTE";
+        case jbank::ExcludeReason::TUKEY_R_LOCATION: return "TUKEY_R_LOCATION";
+        case jbank::ExcludeReason::TUKEY_AMPLITUDE:  return "TUKEY_AMPLITUDE";
+        case jbank::ExcludeReason::TUKEY_WAVE_SCORE: return "TUKEY_WAVE_SCORE";
+        case jbank::ExcludeReason::CATEGORY:         return "CATEGORY";
+        case jbank::ExcludeReason::TUKEY_RR_LENGTH:  return "TUKEY_RR_LENGTH";
+        case jbank::ExcludeReason::POST_ECTOPIC:     return "POST_ECTOPIC";
+        }
+        return "REASON_" + std::to_string(r);
+    }
+
+    // Per local row of one bank: 0 = no template holds it, 1 = a member left
+    // out of the average, 2 = averaged.
+    inline std::vector<uint8_t> rowStateOf(const tbank::TemplateBank& bank)
+    {
+        std::vector<uint8_t> st;
+        auto mark = [&](uint32_t m, uint8_t v) {
+            if (m >= st.size()) st.resize(m + 1, 0);
+            st[m] = std::max(st[m], v);
+            };
+        for (int t = 0; t < bank.size(); ++t) {
+            const tbank::template_of_all_signals& tp = bank.templates[t];
+            for (const uint32_t m : tp.members) mark(m, 1);
+            const std::vector<uint32_t>& avg = tp.members_clean.empty() ? tp.members : tp.members_clean;
+            for (const uint32_t m : avg) mark(m, 2);
+        }
+        return st;
+    }
+
+    inline std::string verdictOf(const std::vector<uint8_t>& rowState, uint32_t row,
+        const std::vector<uint8_t>* buildReason, std::size_t slice,
+        const std::vector<int32_t>* groupOfSlice)
+    {
+        const uint8_t st = (row < rowState.size()) ? rowState[row] : 0;
+        if (st == 2) return "KEPT";
+        if (st == 0) {
+            const bool limit = groupOfSlice && slice < groupOfSlice->size()
+                && (*groupOfSlice)[slice] == tbank::kSpawnLimit;
+            return limit ? "SPAWN_LIMIT" : "UNSCORABLE";
+        }
+        if (buildReason && slice < buildReason->size()) {
+            const uint8_t r = (*buildReason)[slice];
+            if (r != static_cast<uint8_t>(jbank::ExcludeReason::KEPT)
+                && r != static_cast<uint8_t>(jbank::ExcludeReason::NOT_A_MEMBER))
+                return excludeReasonName(r);
+        }
+        return "OPERATOR";
+    }
+
+    // A template's name, built exactly as the viewer titles its panel: the
+    // class (PQRST until an operator confirms one), "_", and the letter
+    // tbank::letterRanks assigns -- one template, one name everywhere.
+    inline std::string templateName(const tbank::TemplateBank& bank, int t,
+        const std::vector<uint8_t>& letters)
+    {
+        if (t < 0 || t >= bank.size()) return {};
+        std::string cls = "PQRST";
+        switch (bank.templates[t].label_code) {
+        case tbank::kUnlabeled:        break;
+        case tbank::kCodePvc:          cls = "PVC";   break;
+        case tbank::kCodePac:          cls = "PAC";   break;
+        case tbank::kCodeVt:           cls = "VT";    break;
+        case tbank::kCodeMinorNoise:   cls = "NOISE"; break;
+        default: cls = "CODE" + std::to_string(bank.templates[t].label_code); break;
+        }
+        const int letterIdx = (static_cast<std::size_t>(t) < letters.size()) ? letters[t] : 0;
+        return cls + "_" + static_cast<char>('A' + (letterIdx % 26));
+    }
+
+    inline BeatColumns buildBeatMoveColumns(const AnalysisJob& job)
+    {
+        constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+        BeatColumns bc;
+        const std::size_t nBins = job.peakResults.size();
+
+        // ---- names: numeric and text columns, in output order ----
+        auto addNum = [&](const std::string& nm) {
+            bc.names.push_back(nm); bc.textSlot.push_back(-1);
+            return bc.names.size() - 1;
+            };
+        int nText = 0;
+        auto addText = [&](const std::string& nm) {
+            bc.names.push_back(nm); bc.textSlot.push_back(nText++);
+            return bc.names.size() - 1;   // the COLUMN; its text slot is textSlot[col]
+            };
+
+        static const char* kLead[3] = { "ch1", "ch2", "ch3" };
+        std::vector<AnchorType> anchors(std::begin(anchor_view::anchor_array),
+            std::end(anchor_view::anchor_array));
+        struct LeadCols { std::size_t kept, tmpl, tp, pq; std::vector<std::size_t> align; };
+        LeadCols lc[3];
+        for (int c = 0; c < 3; ++c) {
+            const std::string L = kLead[c];
+            lc[c].kept = addText(L + "_kept");
+            lc[c].tmpl = addText(L + "_template");
+            lc[c].tp = addNum(L + "_tp_mv_shift");
+            lc[c].pq = addNum(L + "_pq_mv_shift");
+            for (AnchorType a : anchors)
+                lc[c].align.push_back(addNum(L + "_" + anchor_view::label(a) + "_align_ms_shift"));
+        }
+        const std::size_t pKept = addText("ppg_kept");
+        const std::size_t pPttPeak = addNum("ptt_peak_ms");
+        const std::size_t pPttT50 = addNum("ptt_t50_ms");
+        const std::size_t pTmpl = addText("ppg_template");
+        const std::size_t pRow = addNum("ppg_row");
+        const std::size_t pPct = addNum("ppg_percent_upstroke_used_for_alignment");
+        const std::size_t pFoot = addNum("ppg_foot_location_ms");
+        addNum("ppg_foot_horizontal_shift_ms"); addNum("ppg_foot_vertical_shift");
+        const std::size_t pPeak = addNum("ppg_peak_location_ms");
+        addNum("ppg_peak_horizontal_shift_ms"); addNum("ppg_peak_vertical_shift");
+        const std::size_t W = bc.names.size();
+
+        bc.values.resize(nBins);
+        bc.text.resize(nBins);
+        for (std::size_t b = 0; b < nBins; ++b) {
+            bc.values[b].resize(job.peakResults[b].ch1.raw.size());
+            bc.text[b].resize(job.peakResults[b].ch1.raw.size());
+        }
+        // One beat's cells, allocated on first touch.
+        struct Row { std::vector<double>* v = nullptr; std::vector<std::string>* t = nullptr; };
+        auto rowFor = [&](std::size_t b, std::size_t s) -> Row {
+            if (b >= nBins || s >= bc.values[b].size()) return {};
+            std::vector<double>& v = bc.values[b][s];
+            std::vector<std::string>& t = bc.text[b][s];
+            if (v.empty()) v.assign(W, kNaN);
+            if (t.empty()) t.assign(static_cast<std::size_t>(nText), std::string());
+            return { &v, &t };
+            };
+
+        // ---- ECG ----
+        const double ecgMsPer = (job.rates.ecg > 0.0) ? 1000.0 / job.rates.ecg : kNaN;
+        for (int c = 0; c < 3; ++c) {
+            const std::vector<ecg_move_log::VerticalBin>& vbins = job.ecgVertical[c];
+            for (std::size_t b = 0; b < vbins.size() && b < nBins; ++b) {
+                const ecg_move_log::VerticalBin& vb = vbins[b];
+                // kept row -> template name and in/out, from the operator's
+                // final bank; the reason for an "out" from the build's record.
+                std::vector<std::string> nameOf;
+                std::vector<uint8_t> rowState;
+                const bool jv = b < job.info.size() && job.info[b].joint_valid;
+                const std::vector<uint8_t>* reason = jv ? &job.info[b].joint.excluded_reason : nullptr;
+                const std::vector<int32_t>* group = jv ? &job.info[b].joint.group_of_slice : nullptr;
+                if (b < job.tmpl.bins.size()) {
+                    const tbank::TemplateBank& bank = job.tmpl.bins[b].ecg_bank[c];
+                    rowState = rowStateOf(bank);
+                    const std::vector<uint8_t> letters = tbank::letterRanks(bank);
+                    for (int t = 0; t < bank.size(); ++t) {
+                        const std::string nm = templateName(bank, t, letters);
+                        for (const uint32_t m : bank.templates[t].members) {
+                            if (m >= nameOf.size()) nameOf.resize(m + 1);
+                            nameOf[m] = nm;
+                        }
+                    }
+                }
+                for (std::size_t k = 0; k < vb.slice.size(); ++k) {
+                    const Row r = rowFor(b, vb.slice[k]);
+                    if (!r.v) continue;
+                    if (k < vb.tp.size()) (*r.v)[lc[c].tp] = vb.tp[k];
+                    if (k < vb.pq.size()) (*r.v)[lc[c].pq] = vb.pq[k];
+                    const int kr = (k < vb.kept_row.size()) ? vb.kept_row[k] : -1;
+                    (*r.t)[bc.textSlot[lc[c].kept]] = (kr >= 0)
+                        ? verdictOf(rowState, static_cast<uint32_t>(kr), reason, vb.slice[k], group)
+                        : std::string("NOT_LEVELLED");
+                    if (kr < 0) continue;   // dropped: no template, no alignment
+                    if (static_cast<std::size_t>(kr) < nameOf.size())
+                        (*r.t)[bc.textSlot[lc[c].tmpl]] = nameOf[kr];
+                    for (std::size_t ai = 0; ai < anchors.size(); ++ai) {
+                        const auto it = job.ecgRowShifts.find(static_cast<int>(anchors[ai]));
+                        if (it == job.ecgRowShifts.end() || b >= it->second.size()) continue;
+                        const std::vector<double>& sh = it->second[b][c];
+                        if (static_cast<std::size_t>(kr) < sh.size())
+                            (*r.v)[lc[c].align[ai]] = sh[static_cast<std::size_t>(kr)] * ecgMsPer;
+                    }
+                }
+            }
+        }
+
+        // ---- PULSE TRANSIT, AND THE PULSE VERDICT ----
+        for (std::size_t b = 0; b < job.ppgTransit.size() && b < nBins; ++b) {
+            // slice -> pulse row (rows exist only for pulses that passed QC)
+            std::vector<int64_t> rowOfSlice(bc.values[b].size(), -1);
+            if (b < job.info.size()) {
+                const std::vector<uint32_t>& so = job.info[b].ppg_slice_of_row;
+                for (std::size_t k = 0; k < so.size(); ++k)
+                    if (so[k] < rowOfSlice.size()) rowOfSlice[so[k]] = static_cast<int64_t>(k);
+            }
+            const std::vector<uint8_t> rowState = (b < job.tmpl.bins.size())
+                ? rowStateOf(job.tmpl.bins[b].ppg_bank) : std::vector<uint8_t>{};
+            const bool jv = b < job.info.size() && job.info[b].joint_valid;
+            const std::vector<uint8_t>* reason = jv ? &job.info[b].joint.ppg_excluded_reason : nullptr;
+            const std::vector<int32_t>* group = jv ? &job.info[b].joint.ppg_group_of_slice : nullptr;
+            for (const ptt_log::Beat& bt : job.ppgTransit[b]) {
+                const Row r = rowFor(b, bt.slice);
+                if (!r.v) continue;
+                const double rS = bt.r_peak_distance_from_binstart_in_s;
+                std::string verdict = "PEARSON";
+                if (bt.kept)
+                    verdict = (bt.slice < rowOfSlice.size() && rowOfSlice[bt.slice] >= 0)
+                    ? verdictOf(rowState, static_cast<uint32_t>(rowOfSlice[bt.slice]), reason, bt.slice, group)
+                    : std::string("NO_PULSE_ROW");
+                (*r.t)[bc.textSlot[pKept]] = verdict;
+                (*r.v)[pPttPeak] = (std::isfinite(bt.peak_s) && std::isfinite(rS)) ? (bt.peak_s - rS) * 1000.0 : kNaN;
+                (*r.v)[pPttT50] = (std::isfinite(bt.t50_s) && std::isfinite(rS)) ? (bt.t50_s - rS) * 1000.0 : kNaN;
+            }
+        }
+
+        // ---- PPG MOVES ----
+        const double ppgMsPer = (job.rates.ppg > 0.0) ? 1000.0 / job.rates.ppg : kNaN;
+        auto median = [](std::vector<double> a) {
+            if (a.empty()) return std::numeric_limits<double>::quiet_NaN();
+            std::sort(a.begin(), a.end());
+            const std::size_t m = a.size() / 2;
+            return (a.size() % 2) ? a[m] : 0.5 * (a[m - 1] + a[m]);
+            };
+        for (std::size_t b = 0; b < job.tmpl.bins.size() && b < nBins && b < job.info.size(); ++b) {
+            const std::vector<uint32_t>& sliceOf = job.info[b].ppg_slice_of_row;
+            const tbank::TemplateBank& bank = job.tmpl.bins[b].ppg_bank;
+            const std::vector<uint8_t> letters = tbank::letterRanks(bank);
+            for (int t = 0; t < bank.size(); ++t) {
+                const tbank::template_of_all_signals& slot = bank.templates[t];
+                if (slot.tmpl.empty()) continue;
+                const std::string nm = templateName(bank, t, letters);
+                const std::vector<uint32_t>& cohort = !slot.members_clean.empty()
+                    ? slot.members_clean : slot.members;
+                const tbank::PulseVariant& F = slot.pulseVariant(tbank::PulseAnchor::Foot);
+                const tbank::PulseVariant& P = slot.pulseVariant(tbank::PulseAnchor::Peak);
+                struct View { const tbank::PulseVariant* v; std::map<uint32_t, std::size_t> at; double med; };
+                auto viewOf = [&](const tbank::PulseVariant& pv) {
+                    View out{ &pv, {}, kNaN };
+                    std::vector<double> a;
+                    for (std::size_t k = 0; k < pv.row_ids.size(); ++k) {
+                        out.at[pv.row_ids[k]] = k;
+                        if (k < pv.row_anchor_col.size() && std::isfinite(pv.row_anchor_col[k]))
+                            a.push_back(pv.row_anchor_col[k]);
+                    }
+                    out.med = median(std::move(a));
+                    return out;
+                    };
+                const View fv = viewOf(F), pv = viewOf(P);
+                // location, horizontal shift, vertical shift -- three adjacent cells
+                auto fill = [&](std::vector<double>& r, std::size_t at, const View& vw, uint32_t id) {
+                    const auto it = vw.at.find(id);
+                    if (it == vw.at.end()) return;
+                    const std::size_t k = it->second;
+                    const double anc = (k < vw.v->row_anchor_col.size()) ? vw.v->row_anchor_col[k] : kNaN;
+                    r[at + 0] = anc * ppgMsPer;
+                    r[at + 1] = (std::isfinite(anc) && std::isfinite(vw.med)) ? (anc - vw.med) * ppgMsPer : kNaN;
+                    r[at + 2] = (k < vw.v->row_v_shift.size()) ? vw.v->row_v_shift[k] : kNaN;
+                    };
+                for (const uint32_t id : cohort) {
+                    if (id >= sliceOf.size()) continue;
+                    const Row r = rowFor(b, sliceOf[id]);
+                    if (!r.v) continue;
+                    (*r.t)[bc.textSlot[pTmpl]] = nm;
+                    (*r.v)[pRow] = id;
+                    (*r.v)[pPct] = (F.pct >= 0.0) ? F.pct : kNaN;
+                    fill(*r.v, pFoot, fv, id);
+                    fill(*r.v, pPeak, pv, id);
+                }
+            }
+        }
+        return bc;
+    }
+
+    // <stem>_peak_locations_all_beats.csv, with every beat's transit times and
+    // alignment moves. From commit, after the operator's banks are folded into
+    // job.tmpl: the pulse moves are the viewer's final _F / _P re-levels.
+    inline void writePeakLocationsCsv(const AnalysisJob& job)
+    {
+        try {
+            const std::filesystem::path rPeakCsv =
+                std::filesystem::path(job.cfg.r_peak_data_path) / (job.stem + "_peak_locations_all_beats.csv");
+            const BeatColumns moves = buildBeatMoveColumns(job);
+            write_output_csvfile(rPeakCsv.string(), job.peakResults, job.fileID,
+                job.samplingRate, job.rates.ppg, &moves);
+        }
+        catch (const std::exception& e) {
+            std::cerr << "  [peak locations] not written: " << e.what() << "\n";
+        }
+    }
+
     inline bool commit(AnalysisJob& job, const std::vector<BankSnapshot>& banks)
     {
         if (banks.size() < job.tmpl.bins.size()) {
@@ -447,6 +806,7 @@ namespace analysis_job {
             job.tmpl.bins[i].ecg_bank = banks[i].ecg_bank;
             job.tmpl.bins[i].ppg_bank = banks[i].ppg_bank;
         }
+        writePeakLocationsCsv(job);
         // ---- WHERE THE VERDICT GOES NOW ------------------------------
         //
         // <stem>_templates.bin, rewritten in place. It was <stem>_bins.bin,

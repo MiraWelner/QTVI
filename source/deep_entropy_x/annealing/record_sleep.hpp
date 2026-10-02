@@ -75,4 +75,4 @@ namespace record_sleep {
         return rs;
     }
 
-}   // namespace record_sleep#pragma once
+}   // namespace record_sleep

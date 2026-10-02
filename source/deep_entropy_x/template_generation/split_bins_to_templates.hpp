@@ -1,6 +1,6 @@
 #pragma once
 /**
- * @file   joint_bank.hpp
+ * @file   split_bins_to_templates.hpp
  * @brief  Section 4.6 morphology segregation as ONE partition shared by all
  *         four channels (CH1, CH2, CH3, PPG), rather than four independent
  *         banks.
@@ -20,31 +20,6 @@
 #include "template_generation/seed_pool.hpp"
 #include "template_generation/beat_substitute.hpp"
 
- // ---------------------------------------------------------------------------
- // ONE CHANNEL'S VIEW OF ONE BIN'S PARTITION
- // ---------------------------------------------------------------------------
- //
- // What projectToChannel fills and the morphology writers read: the bank as
- // that channel sees it, plus the per-slice verdicts decided once for all four
- // channels. The four copies per bin are VIEWS of a single partition, not four
- // partitions -- which is the whole point of this file.
- //
- // IN namespace tbank, NOT jbank, because every member is a tbank type or a
- // type that depends on one, and because the readers (morphology_csv, the
- // serializer) speak tbank. It cannot live in template_bank.hpp: seed_pool.hpp
- // and pvc_filter.hpp both include that header for tbank::Category and
- // tbank::PvcFilter, so aggregating them there is a cycle. It has to sit
- // downstream of all three, and this file already is.
- //
- // It used to live in bin_pipeline.hpp beside a per-channel driver
- // (runChannel) that one joint partition replaced. After that driver went, the
- // file held this struct and six static_asserts pinning
- // alignment::TukeyOutcome to tbank::TukeyOutcome -- and nothing converts one
- // to the other any more: alignment's per-beat tukey_outcome has no reader
- // outside alignment.hpp, and the only writer of BeatFlags::tukey is
- // tukeyOutcomeFor below, which maps ExcludeReason through an explicit switch.
- // So the file is gone. If a value-level conversion is ever reintroduced, the
- // assert belongs next to that cast.
 namespace tbank {
 
     struct ChannelOutput {
@@ -735,7 +710,7 @@ namespace jbank {
             ++counts->n_rejected_by[out.failing_channel];
 
         // ---- spawn ------------------------------------------------------
-        if (bank.next_spawn_seq > 200) { out.group_id = tbank::kUnscorable; return out; }
+        if (bank.next_spawn_seq > 200) { out.group_id = tbank::kSpawnLimit; return out; }
         if (bank.atCap()) {
             const MergeCandidate mc = findMergePair(bank);
             if (mc.valid() && !mc.both_confirmed) {
@@ -1624,7 +1599,7 @@ namespace jbank {
 
     struct BinBankOutput {
         JointBank bank;
-        std::vector<int32_t> group_of_slice;   // sized n_slices; -1/kNoMatch/kUnscorable
+        std::vector<int32_t> group_of_slice;   // sized n_slices; -1/kNoMatch/kUnscorable/kSpawnLimit
         BankCounts counts;
         std::vector<tbank::CapRaiseEvent> cap_raises;
 

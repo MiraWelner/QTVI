@@ -259,6 +259,11 @@ public:
         m_ecgOutliers = std::move(beats); update();
     }
 
+    // Whether both sets above are drawn (the show_extrema_beats checkbox).
+    // Hidden extremes also stop voting in the y-ranges, so the axes fit the
+    // traces that are actually on screen.
+    void setShowExtrema(bool on) { m_showExtrema = on; update(); }
+
     // Pin the ECG channel's contribution to the x-frame to a FIXED window, in
     // seconds relative to R, instead of deriving it from the current ECG
     // trace's finite extent. The four alignments (P/Q/R/J) produce averages
@@ -798,6 +803,7 @@ private:
     int   m_nPpgKept = -1;   // see setPpgKept
     std::vector<std::vector<double>> m_ppgOutliers;   // see setPpgOutliers
     std::vector<std::vector<double>> m_ecgOutliers;   // see setEcgOutliers
+    bool m_showExtrema = true;   // see setShowExtrema
 
     static constexpr int margin_left = 26, margin_right = 26, margin_top = 23, margin_bottom = 26;
     static constexpr int click_radius_around_marker = 12;

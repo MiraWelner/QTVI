@@ -377,6 +377,12 @@ private:
     void realignAllVisiblePulses();
 
     void wirePpgAlignButtons();
+    // show_extrema_beats: the dashed extreme beats on every panel, ECG and PPG.
+    // findChild, like the align buttons: no checkbox in the .ui = always shown.
+    void wireExtremaToggle();
+    bool m_showExtrema = true;
+    // Right / S: next page, or Finish on the last one. Left / W: previous page.
+    void wirePageKeys();
     // Push the members back into the radio group and the spin box with their
     // signals blocked, so the checked button always names the alignment the
     // panels are actually drawn on.

@@ -1,5 +1,4 @@
 #pragma once
-#pragma once
 /**
  * @file   data_bin_header.hpp
  * @brief  The 592-byte header of a file_to_bin v1 data .bin, and where its

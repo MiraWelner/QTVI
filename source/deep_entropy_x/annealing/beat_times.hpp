@@ -1,5 +1,4 @@
 #pragma once
-#pragma once
 /**
  * @file   beat_times.hpp
  * @brief  Recording time, in seconds from the start of the record, of every

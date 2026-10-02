@@ -22,8 +22,7 @@ void annotation_handler::addSegment(int start, int end,
     addSegment(start, end, label, marking_type, sampleRate, NaN, NaN);
 }
 
-void annotation_handler::addSegment(int start, int end,
-    const std::string& label, const std::string& marking_type, double sampleRate,
+void annotation_handler::addSegment(int start, int end,const std::string& label, const std::string& marking_type, double sampleRate,
     double threshold, double blanking) {
     AnnotationSegment seg(std::min(start, end), std::max(start, end), label, sampleRate);
     seg.marking_type = marking_type;

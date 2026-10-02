@@ -444,16 +444,13 @@ double FeatureMarks::find_t_end(const std::vector<double>& v, double fs, int r_c
     const int lastFin = sample_extent::lastFinite(v);
     if (lastFin < 0) return -1.0;
     const int lo0 = cl(static_cast<int>(std::lround(j_point + 0.100 * fs)));
-    int hi = std::min(lastFin,
-        cl(static_cast<int>(std::lround(j_point + 0.700 * fs))));
+    int hi = cl(static_cast<int>(std::lround(j_point + 0.700 * fs)));
     {
         const int nr = nextRColumn(v, fs, r_col);
-        if (nr > 0) {
-            const int room = nr - static_cast<int>(std::lround(0.250 * fs));
-            hi = std::min(hi, room);
-        }
+        if (nr > r_col)
+            hi = cl(r_col + static_cast<int>(std::lround(0.67 * (nr - r_col))));
     }
-    if (hi <= lo0 + 3) return cld(j_point);
+    hi = std::min(hi, lastFin);
 
     // B = post-T baseline at the right edge. E = the extremum in the window, by
     // |distance| so an inverted T behaves the same.

@@ -1025,7 +1025,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     p.setFont(titleBase);
     if (!counts.isEmpty()) {
         p.setPen(QColor(150, 150, 150));
-        p.drawText(margin_left, 22, "# Beats: " + counts.join("  "));
+        p.drawText(margin_left, 22, "# beats: " + counts.join("  "));
     }
 
     // Y-axis rules for the normalized traces:
@@ -1038,7 +1038,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     compute_visible_range(m_ecg, yLo, yHi);
     // The dashed ECG extremes vote, as the pulse ones do, so the tallest beat
     // is never cut off at the frame.
-    if (m_showEcgTrace)
+    if (m_showEcgTrace && m_showExtrema)
         for (const auto& ob : m_ecgOutliers) {
             double l = 0.0, h = 0.0;
             if (ob.size() >= 2 && compute_visible_range(ob, l, h)) {
@@ -1079,7 +1079,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     if (m_hasPPG) merge_into(m_ppg, pLo, pHi, havePpg);
     // The dashed extreme pulses vote too, so the tallest one is never cut off
     // at the frame -- showing how far the cohort spreads is the point of them.
-    if (m_hasPPG && m_showPpgTrace)
+    if (m_hasPPG && m_showPpgTrace && m_showExtrema)
         for (const auto& ob : m_ppgOutliers) merge_into(ob, pLo, pHi, havePpg);
     merge_into(m_abp, aLo, aHi, haveArt);
     merge_into(m_art, aLo, aHi, haveArt);
@@ -1256,7 +1256,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         // thinner, same colour, under the trace so the median stays on top.
         {
             QPen dash(with_trace_alpha(ecg_trace_color), 1.0, Qt::DashLine);
-            for (const auto& ob : m_ecgOutliers)
+            if (m_showExtrema) for (const auto& ob : m_ecgOutliers)
                 draw_trace_fixed_scale(p, ob, x0, margin_top, ph, dx, dash,
                     static_cast<int>(ob.size()), yLo, yHi);
         }
@@ -1276,7 +1276,7 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             // same colour, UNDER the template line so the median stays on top.
             {
                 QPen dash(with_trace_alpha(ppg_trace_color), 1.0, Qt::DashLine);
-                for (const auto& ob : m_ppgOutliers)
+                if (m_showExtrema) for (const auto& ob : m_ppgOutliers)
                     draw_trace_fixed_scale(p, ob, x0, margin_top, ph, dx, dash,
                         static_cast<int>(ob.size()), pLo, pHi);
             }

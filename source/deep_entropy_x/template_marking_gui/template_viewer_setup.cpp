@@ -205,6 +205,8 @@ TemplateViewerWindow::TemplateViewerWindow(QWidget* parent)
     }
     wireAlignButtons();
     wirePpgAlignButtons();
+    wireExtremaToggle();
+    wirePageKeys();
 }
 
 TemplateViewerWindow::~TemplateViewerWindow() { delete ui; }
@@ -821,6 +823,49 @@ bool TemplateViewerWindow::eventFilter(QObject* obj, QEvent* ev) {
         }
     }
     return QMainWindow::eventFilter(obj, ev);
+}
+
+// ---- show_extrema_beats -----------------------------------------------------
+//
+// One switch for both dashed overlays -- the ECG beats with the largest and
+// smallest P-to-T range and the pulses at the extremes of peak / foot height.
+// Panels are rebuilt on every page turn and re-skin, so each new panel takes
+// m_showExtrema (template_viewer_page.cpp); a toggle sets it and repaints the
+// panels already on screen. The extremes are still computed when hidden, so
+// turning it back on needs no re-pick.
+void TemplateViewerWindow::wireExtremaToggle() {
+    QCheckBox* cb = findChild<QCheckBox*>(QStringLiteral("show_extrema_beats"));
+    if (!cb) return;   // not in the .ui: overlays stay on
+    m_showExtrema = cb->isChecked();
+    connect(cb, &QCheckBox::toggled, this, [this](bool on) {
+        m_showExtrema = on;
+        for (BinPlotWidget* pw : m_allPlots)
+            if (pw) pw->setShowExtrema(on);
+        });
+}
+
+// ---- PAGE KEYS ---------------------------------------------------------------
+//
+// Right and S go forward: the next page, or -- on the last page, where Next is
+// disabled -- Finish, exactly as clicking it (save_bin_and_csv). Left and W go
+// back. A is NOT bound here: it is the Automatic alignment hotkey
+// (wireAlignButtons).
+//
+// Window-context shortcuts, so a spin box or line edit with focus still gets
+// its own arrow keys: Qt offers those widgets the key first (ShortcutOverride).
+void TemplateViewerWindow::wirePageKeys() {
+    auto forward = [this]() {
+        if (m_currentPage < m_totalPages - 1) onNextPage();
+        else save_bin_and_csv();
+        };
+    for (const Qt::Key k : { Qt::Key_Right, Qt::Key_S }) {
+        auto* sc = new QShortcut(QKeySequence(k), this);
+        connect(sc, &QShortcut::activated, this, forward);
+    }
+    for (const Qt::Key k : { Qt::Key_Left, Qt::Key_W }) {
+        auto* sc = new QShortcut(QKeySequence(k), this);
+        connect(sc, &QShortcut::activated, this, [this]() { onPrevPage(); });
+    }
 }
 
 // Radio group that pins the focus panel to one alignment.

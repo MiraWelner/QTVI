@@ -886,6 +886,7 @@ void TemplateViewerWindow::showPage() {
             pw->setEcgKept(leads[li].nClean);
             pw->setPpgKept(hasPPG ? ppgSlot->cleanCount() : -1);
             pw->setPpgOutliers(ppgOutliers);
+            pw->setShowExtrema(m_showExtrema);
 
             pw->setHasPPG(hasPPG);
 
@@ -1599,7 +1600,12 @@ BinPlotWidget::State TemplateViewerWindow::panelState(int binIdx, int leadIdx,
     if (leadIdx >= 0 && leadIdx <= 2 && templateIdx >= 0
         && templateIdx < b.ecg_bank[leadIdx].size())
         ecgBad = b.ecg_bank[leadIdx].templates[templateIdx].badEcgMarked();
-    if (templateIdx >= 0 && templateIdx < b.ppg_bank.size())
+    // NO PULSE IS NOT A BAD PULSE. bad_ppg == 2 means the bin has no pulse at
+    // all (SHHS has none anywhere); initAfterBinsLoaded marks its slots
+    // bad-pulse so the CSV and downstream exclusion treat it as absent, but
+    // that is not a verdict on a waveform, and the panel used to show it as
+    // BAD PPG. The bits are untouched; only the panel stops reporting them.
+    if (b.bad_ppg != 2 && templateIdx >= 0 && templateIdx < b.ppg_bank.size())
         ppgBad = b.ppg_bank.templates[templateIdx].badPulseMarked();
     return (ecgBad && ppgBad) ? BinPlotWidget::State::BadBoth
         : ppgBad ? BinPlotWidget::State::BadPPG

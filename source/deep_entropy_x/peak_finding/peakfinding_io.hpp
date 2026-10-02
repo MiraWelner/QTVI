@@ -17,6 +17,7 @@
 #include <stdexcept>
 #include <cstdint>
 #include <cmath>
+#include <limits>
 #include <array>
 #include <cstdio>
 
@@ -299,7 +300,25 @@ inline void write_output_binfile(const std::string& path, const std::vector<outp
     }
 }
 
-inline void write_output_csvfile(const std::string& path, const std::vector<output_binfile_data>& bins, const std::string& fileID, double sampleRateHz = 0.0)
+// Per-beat columns, placed right after the CH1 R group. values[bin][slice] is
+// that beat's row of cells, parallel to names; NaN or a missing row is blank.
+// slice is the R-pair ordinal: the beat cut at ch1.raw[slice], which is row
+// `slice` of the ch1_r column. Built by the caller
+// (analysis_job::buildBeatMoveColumns), so this writer needs to know nothing
+// about what the columns mean.
+//
+// TEXT COLUMNS. textSlot[col] >= 0 marks a column as text: its cell is
+// text[bin][slice][textSlot[col]], blank when empty. Numeric columns read
+// values; textSlot shorter than names means the rest are numeric.
+struct BeatColumns {
+    std::vector<std::string> names;
+    std::vector<int> textSlot;
+    std::vector<std::vector<std::vector<double>>> values;
+    std::vector<std::vector<std::vector<std::string>>> text;
+};
+
+inline void write_output_csvfile(const std::string& path, const std::vector<output_binfile_data>& bins, const std::string& fileID, double sampleRateHz = 0.0, double ppgRateHz = 0.0,
+    const BeatColumns* beatCols = nullptr)
 {
     std::ofstream f(path);
     if (!f.is_open())
@@ -308,6 +327,9 @@ inline void write_output_csvfile(const std::string& path, const std::vector<outp
     constexpr std::size_t COLS_PER_ROW = 11;
     const bool haveRate = sampleRateHz > 0.0;
     const double secPerSample = haveRate ? (1.0 / sampleRateHz) : 0.0;
+    // PPG indices are on the PPG clock, which need not be the ECG's. 0 = same as ECG.
+    const double ppgSecPerSample = haveRate
+        ? ((ppgRateHz > 0.0) ? 1.0 / ppgRateHz : secPerSample) : 0.0;
 
     // Local PR-segment baseline: median of samples [peak-100, peak-40)
     // (~40-100 ms before the peak at 1000 Hz -- the flat PR interval).
@@ -334,29 +356,120 @@ inline void write_output_csvfile(const std::string& path, const std::vector<outp
             return best;
         };
 
+    // First PPG onset after a given peak sample: the end of that pulse.
+    auto followingOnset = [](const std::vector<std::size_t>& mins,
+        std::size_t peakSample) -> long long {
+            for (std::size_t m : mins)
+                if (m > peakSample) return static_cast<long long>(m);
+            return -1;
+        };
+
+    // The 50% point: where the upstroke first reaches halfway from onset to
+    // peak, linearly interpolated between samples. -1 when it can't be found.
+    auto t50Between = [](const std::vector<double>& sig, std::size_t on,
+        std::size_t pk) -> double {
+            if (pk <= on || pk >= sig.size()) return -1.0;
+            const double lo = sig[on], hi = sig[pk];
+            if (!std::isfinite(lo) || !std::isfinite(hi) || !(hi > lo)) return -1.0;
+            const double level = lo + 0.5 * (hi - lo);
+            for (std::size_t k = on + 1; k <= pk; ++k) {
+                const double a = sig[k - 1], b = sig[k];
+                if (!std::isfinite(a) || !std::isfinite(b) || b < level) continue;
+                return (b == a) ? static_cast<double>(k)
+                    : static_cast<double>(k - 1) + (level - a) / (b - a);
+            }
+            return -1.0;
+        };
+
+    // t80 and pw80, defined exactly as FeatureMarks defines them for the
+    // templates (amplitude_crossing / crossing_at_level in feature_marks.cpp),
+    // so the per-beat and per-template numbers mean the same thing.
+    //
+    // amplitudeCrossing: where the trace first reaches `frac` of the way from
+    // v[a] to v[b], interpolated between the straddling samples; with no
+    // straddle, the closest sample, as FeatureMarks falls back. -1 on bad input.
+    auto amplitudeCrossing = [](const std::vector<double>& v, long long a,
+        long long b, double frac) -> double {
+            const long long N = static_cast<long long>(v.size());
+            if (a < 0 || b <= a || b >= N) return -1.0;
+            const double va = v[a], vb = v[b];
+            if (std::isnan(va) || std::isnan(vb)) return -1.0;
+            const double target = va + frac * (vb - va);
+            const bool rising = (vb >= va);
+            for (long long i = a + 1; i <= b; ++i) {
+                if (std::isnan(v[i]) || std::isnan(v[i - 1])) continue;
+                const bool crossed = rising ? (v[i] >= target && v[i - 1] < target)
+                    : (v[i] <= target && v[i - 1] > target);
+                if (!crossed) continue;
+                const double den = v[i] - v[i - 1];
+                const double f = (den != 0.0) ? (target - v[i - 1]) / den : 0.0;
+                return static_cast<double>(i - 1) + std::clamp(f, 0.0, 1.0);
+            }
+            long long best = a; double bestDiff = std::numeric_limits<double>::infinity();
+            for (long long i = a; i <= b; ++i) {
+                if (std::isnan(v[i])) continue;
+                const double d = std::abs(v[i] - target);
+                if (d < bestDiff) { bestDiff = d; best = i; }
+            }
+            return static_cast<double>(best);
+        };
+    // crossingAtLevel: first crossing of an absolute level between a and b,
+    // interpolated; -1 when there is none.
+    auto crossingAtLevel = [](const std::vector<double>& v, long long a,
+        long long b, double target) -> double {
+            const long long N = static_cast<long long>(v.size());
+            if (a < 0 || b <= a || b >= N) return -1.0;
+            const double va = v[a], vb = v[b];
+            if (std::isnan(va) || std::isnan(vb) || std::isnan(target)) return -1.0;
+            const bool rising = (vb >= va);
+            for (long long i = a + 1; i <= b; ++i) {
+                if (std::isnan(v[i]) || std::isnan(v[i - 1])) continue;
+                const bool crossed = rising ? (v[i] >= target && v[i - 1] < target)
+                    : (v[i] <= target && v[i - 1] > target);
+                if (!crossed) continue;
+                const double den = v[i] - v[i - 1];
+                const double f = (den != 0.0) ? (target - v[i - 1]) / den : 0.0;
+                return static_cast<double>(i - 1) + std::clamp(f, 0.0, 1.0);
+            }
+            return -1.0;
+        };
+
     static const char* const column_suffix[COLS_PER_ROW] = {
         "ch1_r", "ch1_squared_r", "ch1_absval_r",
         "ch2_r", "ch2_squared_r", "ch2_absval_r",
         "ch3_r", "ch3_squared_r", "ch3_absval_r",
-        "ppg_min", "ppg_max"
+        "ppg_onset", "ppg_peak"
     };
     static const char* const interval_column_name[COLS_PER_ROW] = {
         "ch1_rr_interval_ms", "ch1_squared_rr_interval_ms", "ch1_absval_rr_interval_ms",
         "ch2_rr_interval_ms", "ch2_squared_rr_interval_ms", "ch2_absval_rr_interval_ms",
         "ch3_rr_interval_ms", "ch3_squared_rr_interval_ms", "ch3_absval_rr_interval_ms",
-        "ppg_trough_interval_ms", "ppg_peak_interval_ms"
+        "ppg_onset_interval_ms", "ppg_peak_interval_ms"
     };
-    // Header: file_id, bin, then 6 cells per column.
+    // The two ways every time is written, header and cells alike.
+    static const char* const kTimeSuffix[2] = {
+        "_ms_from_bin_start", "_ms_from_file_start" };
+    auto timeHeader = [&](const char* prefix) {
+        for (const char* s : kTimeSuffix) f << ',' << prefix << s;
+        };
+
+    // Header: file_id, bin, then 4 cells per column, then the pulse end and
+    // onset -> 50% point next to the last group, ppg_peak. The CH1 R group
+    // is followed by the per-beat block (see BeatColumns above).
     f << "file_id,bin";
     for (std::size_t c = 0; c < COLS_PER_ROW; ++c) {
-        f << ',' << column_suffix[c] << "_sec_from_bin_start"
-            << ',' << column_suffix[c] << "_ms_from_bin_start"
-            << ',' << column_suffix[c] << "_sec_from_file_start"
-            << ',' << column_suffix[c] << "_ms_from_file_start"
-            << ',' << column_suffix[c] << "_peak_height_mv"
-            << ',' << interval_column_name[c];
+        timeHeader(column_suffix[c]);
+        // A height per ECG R (mV) and per PPG peak (sensor units, so no unit
+        // in the name). None for the onset: it is the baseline end of the
+        // peak's amplitude, not a height of its own.
+        if (c < 9)        f << ',' << column_suffix[c] << "_peak_height_mv";
+        else if (c == 10) f << ",ppg_peak_amplitude";
+        f << ',' << interval_column_name[c];
+        if (c == 0 && beatCols)
+            for (const std::string& nm : beatCols->names) f << ',' << nm;
     }
-    f << '\n';
+    timeHeader("ppg_end");
+    f << ",ppg_onset_to_t50_ms,ppg_onset_to_t80_ms,ppg_pw80_ms\n";
 
     struct ColBundle {
         const std::vector<std::size_t>* peaks;
@@ -367,6 +480,12 @@ inline void write_output_csvfile(const std::string& path, const std::vector<outp
     // current bin relative to the whole recording. Advances at the end of
     // each bin by that bin's ECG length in seconds.
     double binStartSec = 0.0;
+
+    // The two time cells, in kTimeSuffix's order; blank when !has.
+    auto timeCells = [&](bool has, double binSec) {
+        const double v[2] = { binSec * 1000.0, (binStartSec + binSec) * 1000.0 };
+        for (const double x : v) { f << ','; if (has) f << x; }
+        };
 
     for (std::size_t b = 0; b < bins.size(); ++b) {
         const auto& bin = bins[b];
@@ -397,36 +516,17 @@ inline void write_output_csvfile(const std::string& path, const std::vector<outp
                 const auto& peaks = *bundle.peaks;
                 const bool has = r < peaks.size();
                 const std::size_t idx0 = has ? peaks[r] : 0;
+                const double sps = (c >= 9) ? ppgSecPerSample : secPerSample;
 
-                const double binSec = has ? (idx0 * secPerSample) : 0.0;
-                const double totalSec = binStartSec + binSec;
+                const double binSec = has ? (idx0 * sps) : 0.0;
+                timeCells(has && haveRate, binSec);
 
-                // bin_time_sec
-                f << ',';
-                if (has && haveRate) f << binSec;
-
-                // bin_time_ms
-                f << ',';
-                if (has && haveRate) f << (binSec * 1000.0);
-
-                // total_time_sec
-                f << ',';
-                if (has && haveRate) f << totalSec;
-
-                // total_time_ms
-                f << ',';
-                if (has && haveRate) f << (totalSec * 1000.0);
-
-                // peak_height
+                // peak_height -- no cell at all for the onset (see header)
                 //   ECG columns: signal[peak] minus local PR-segment baseline.
-                //   ppg_max:     ppgSignal[peak] - ppgSignal[preceding_foot].
-                //   ppg_min:     empty (a foot alone isn't a pulse amplitude).
-                f << ',';
-                if (has && bundle.signal && idx0 < bundle.signal->size()) {
-                    if (c == 9) {
-                        // ppg_min -- no natural height
-                    }
-                    else if (c == 10) {
+                //   ppg_peak:    ppgSignal[peak] - ppgSignal[preceding onset].
+                if (c != 9) f << ',';
+                if (c != 9 && has && bundle.signal && idx0 < bundle.signal->size()) {
+                    if (c == 10) {
                         const long long foot = precedingFoot(bin.ppgMinAmps, idx0);
                         if (foot >= 0 &&
                             static_cast<std::size_t>(foot) < bundle.signal->size()) {
@@ -445,7 +545,67 @@ inline void write_output_csvfile(const std::string& path, const std::vector<outp
                 if (has && haveRate && r > 0) {
                     const std::size_t prev0 = peaks[r - 1];
                     f << ((static_cast<double>(idx0) - static_cast<double>(prev0))
-                        * secPerSample * 1000.0);
+                        * sps * 1000.0);
+                }
+
+                // CH1 R's beat: the caller's per-beat block, same key.
+                if (c == 0) {
+                    if (beatCols) {
+                        const std::vector<double>* cells = nullptr;
+                        if (has && b < beatCols->values.size() && r < beatCols->values[b].size()
+                            && !beatCols->values[b][r].empty())
+                            cells = &beatCols->values[b][r];
+                        const std::vector<std::string>* texts = nullptr;
+                        if (has && b < beatCols->text.size() && r < beatCols->text[b].size()
+                            && !beatCols->text[b][r].empty())
+                            texts = &beatCols->text[b][r];
+                        for (std::size_t k = 0; k < beatCols->names.size(); ++k) {
+                            f << ',';
+                            const int ts = (k < beatCols->textSlot.size()) ? beatCols->textSlot[k] : -1;
+                            if (ts >= 0) {
+                                if (texts && static_cast<std::size_t>(ts) < texts->size()) f << (*texts)[ts];
+                            }
+                            else if (cells && k < cells->size() && std::isfinite((*cells)[k])) f << (*cells)[k];
+                        }
+                    }
+                }
+            }
+
+            // This row's pulse: its end (the next onset after the peak) and
+            // onset -> t50 (onset = the onset preceding the peak).
+            {
+                const auto& pk = bin.ppgMaxAmps;
+                const bool hasPk = haveRate && r < pk.size();
+                const long long end = hasPk ? followingOnset(bin.ppgMinAmps, pk[r]) : -1;
+                const double endBin = (end >= 0) ? static_cast<double>(end) * ppgSecPerSample : 0.0;
+                timeCells(end >= 0, endBin);
+                f << ',';
+                const long long on = hasPk ? precedingFoot(bin.ppgMinAmps, pk[r]) : -1;
+                if (hasPk) {
+                    const double t = (on >= 0)
+                        ? t50Between(bin.ppgSignal, static_cast<std::size_t>(on), pk[r]) : -1.0;
+                    if (t >= 0.0)
+                        f << (t - static_cast<double>(on)) * ppgSecPerSample * 1000.0;
+                }
+
+                // t80: where the downstroke has fallen 80% of the way from the
+                // peak to the end. Written as its distance from the onset.
+                // pw80: the pulse's width at t80's level -- t80 minus where the
+                // upstroke first crosses that same level.
+                const std::vector<double>& sig = bin.ppgSignal;
+                const long long ipk = hasPk ? static_cast<long long>(pk[r]) : -1;
+                const double t80 = (hasPk && end > ipk)
+                    ? amplitudeCrossing(sig, ipk, end, 0.80) : -1.0;
+                f << ',';
+                if (t80 >= 0.0 && on >= 0)
+                    f << (t80 - static_cast<double>(on)) * ppgSecPerSample * 1000.0;
+                f << ',';
+                if (t80 >= 0.0 && on >= 0 && ipk > on
+                    && static_cast<std::size_t>(end) < sig.size()) {
+                    const double level = sig[ipk] + 0.80 * (sig[end] - sig[ipk]);
+                    const double rise = crossingAtLevel(sig, on, ipk, level);
+                    if (rise >= 0.0 && t80 > rise)
+                        f << (t80 - rise) * ppgSecPerSample * 1000.0;
                 }
             }
             f << '\n';

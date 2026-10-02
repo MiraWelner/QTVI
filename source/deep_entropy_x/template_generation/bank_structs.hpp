@@ -115,6 +115,11 @@ namespace tbank {
 
     inline constexpr int kUnscorable = -2;   // returned by assignment
     inline constexpr int kNoMatch = -1;   // spawn required
+    // The bin had already spawned its limit of templates, so a beat matching
+    // none of them was left unassigned rather than spawning another. Was
+    // reported as kUnscorable, which made it indistinguishable from a beat
+    // that could not be measured.
+    inline constexpr int kSpawnLimit = -3;
 
     inline constexpr uint8_t kUnlabeled = 0;   // label_code sentinel
 
@@ -233,7 +238,8 @@ namespace tbank {
         TukeyOutcome tukey = TukeyOutcome::NOT_ELIGIBLE;
 
         // Bank assignment per ECG channel, and PPG. -1 = unassigned,
-        // kUnscorable = too little axis overlap to score.
+        // kUnscorable = too little axis overlap to score; kSpawnLimit = the
+        // bin's spawn limit was reached before this beat found a group.
         std::array<int32_t, 3> template_id_ecg = { -1, -1, -1 };
         int32_t                template_id_ppg = -1;
 

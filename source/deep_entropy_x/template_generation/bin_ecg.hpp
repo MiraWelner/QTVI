@@ -50,6 +50,7 @@ struct EcgChannelResult {
     std::vector<std::vector<double>> tp_shift_raw;
     std::vector<std::vector<double>> pq_shift_raw;
     std::vector<std::vector<int>> kept_of_aligned_raw;   // for the move log
+    std::vector<std::vector<uint32_t>> slice_of_aligned_raw;   // R-pair ordinal per aligned beat
 };
 
 struct EcgTemplateResult {
@@ -103,6 +104,7 @@ namespace ecg_move_log {
         std::vector<double> tp;
         std::vector<double> pq;
         std::vector<int>    kept_row;
+        std::vector<uint32_t> slice;   // R-pair ordinal per aligned beat
     };
     inline std::array<std::vector<VerticalBin>, 3> g_vertical;
 
@@ -127,7 +129,8 @@ namespace ecg_move_log {
     inline void stash_vertical(int chIdx,
         std::vector<std::vector<double>> tp,
         std::vector<std::vector<double>> pq,
-        std::vector<std::vector<int>> kept_row)
+        std::vector<std::vector<int>> kept_row,
+        std::vector<std::vector<uint32_t>> slice = {})
     {
         if (chIdx < 0 || chIdx >= 3) return;
         const size_t n = tp.size();
@@ -137,6 +140,7 @@ namespace ecg_move_log {
             dst[b].tp = std::move(tp[b]);
             if (b < pq.size())       dst[b].pq = std::move(pq[b]);
             if (b < kept_row.size()) dst[b].kept_row = std::move(kept_row[b]);
+            if (b < slice.size())    dst[b].slice = std::move(slice[b]);
         }
     }
 
@@ -220,6 +224,10 @@ struct SingleMethodResult {
     // aligned beat became, or -1 for one excluded from `usable`. The move log
     // joins the anchor alignments' per-row shifts through it.
     std::vector<int> kept_of_aligned;
+    // Parallel to the same aligned beats: each one's R-pair ordinal
+    // (alignment's slice_index), kept or not, so a dropped beat's vertical
+    // shifts still join the per-beat rows of the peak-locations CSV.
+    std::vector<uint32_t> slice_of_aligned;
 
 
 
@@ -405,6 +413,7 @@ static inline SingleMethodResult build_ecg_template_for_method(const vector<doub
         for (const auto* sl : usable) out_kept_beats->push_back(*sl);
     }
     res.kept_of_aligned.assign(aligned.beats.size(), -1);
+    res.slice_of_aligned = aligned.slice_index;
     for (size_t k = 0; k < usableIdx.size(); ++k)
         if (usableIdx[k] < res.kept_of_aligned.size())
             res.kept_of_aligned[usableIdx[k]] = static_cast<int>(k);
@@ -473,6 +482,7 @@ static inline void init_channel_result(EcgChannelResult& cr, size_t n) {
     cr.tp_shift_raw.resize(n);
     cr.pq_shift_raw.resize(n);
     cr.kept_of_aligned_raw.resize(n);
+    cr.slice_of_aligned_raw.resize(n);
 }
 
 /**
@@ -538,6 +548,7 @@ static inline void process_channel_fast(
         cr.tp_shift_raw[i] = std::move(raw_res.tp_shift);   // distinct i -> race-free
         cr.pq_shift_raw[i] = std::move(raw_res.pq_shift);
         cr.kept_of_aligned_raw[i] = std::move(raw_res.kept_of_aligned);
+        cr.slice_of_aligned_raw[i] = std::move(raw_res.slice_of_aligned);
     }
 
     // Method 4: unfiltered (original ECG signal + master R-peaks). No std.
@@ -641,9 +652,9 @@ inline EcgTemplateResult CreateEcgTemplatesFast(
     // STASHED, NOT WRITTEN: the horizontal half of the move log does not exist
     // until prepare has run every anchor. See ecg_move_log. Copied, because
     // res is returned with these fields and nothing says no one reads them.
-    ecg_move_log::stash_vertical(0, res.ch1.tp_shift_raw, res.ch1.pq_shift_raw, res.ch1.kept_of_aligned_raw);
-    ecg_move_log::stash_vertical(1, res.ch2.tp_shift_raw, res.ch2.pq_shift_raw, res.ch2.kept_of_aligned_raw);
-    ecg_move_log::stash_vertical(2, res.ch3.tp_shift_raw, res.ch3.pq_shift_raw, res.ch3.kept_of_aligned_raw);
+    ecg_move_log::stash_vertical(0, res.ch1.tp_shift_raw, res.ch1.pq_shift_raw, res.ch1.kept_of_aligned_raw, res.ch1.slice_of_aligned_raw);
+    ecg_move_log::stash_vertical(1, res.ch2.tp_shift_raw, res.ch2.pq_shift_raw, res.ch2.kept_of_aligned_raw, res.ch2.slice_of_aligned_raw);
+    ecg_move_log::stash_vertical(2, res.ch3.tp_shift_raw, res.ch3.pq_shift_raw, res.ch3.kept_of_aligned_raw, res.ch3.slice_of_aligned_raw);
 
     // The join key, surfaced so the partition and the archive read the SAME map
     // rather than two copies that can drift. Moved, not copied: keptIdx dies

@@ -13,6 +13,8 @@
 #include <vector>
 #include <fstream>
 #include <algorithm>
+#include <cstdio>
+#include <cstring>
 
 namespace noise_markings {
 
@@ -75,6 +77,11 @@ namespace noise_markings {
 
     inline constexpr char     noise_marking_magic[8] = { 'N','M','K','B','0','0','0','1' };
     inline constexpr uint32_t noise_marking_version = 0;
+    // VERSION 1 IS THE SAME LAYOUT. Files on disk (e.g. the MESA bl_dmu set)
+    // were written by a build whose constant was 1; it was later set to 0 with
+    // no change to the header or the eight columns, so a v1 file reads exactly
+    // as a v0 one. Accepted, never written. Any OTHER version is still refused.
+    inline constexpr uint32_t noise_marking_version_same_layout = 1;
 
     // Column order. Reader and writer both index by these names, so neither can
     // drift from the other by a position.
@@ -116,7 +123,10 @@ namespace noise_markings {
     };
 
     struct RowsResult {
-        bool read = false;          // the file opened, magic and version matched
+        bool read = false;          // the file opened, and its layout was recognised
+        // True for a pre-versioned file (see loadRows). Its rows carry no
+        // threshold / blanking, so those read NaN.
+        bool legacy = false;
         std::string path;
         std::string error;          // set on failure, or on a partial read
         std::vector<Row> rows;
@@ -129,20 +139,74 @@ namespace noise_markings {
         std::ifstream f(path, std::ios::binary);
         if (!f) { out.error = "not found"; return out; }
 
+        f.seekg(0, std::ios::end);
+        const uint64_t fileSize = static_cast<uint64_t>(f.tellg());
+        f.seekg(0, std::ios::beg);
+
         char header[sizeof(noise_marking_magic)] = {};
         if (!f.read(header, sizeof(header))) {
             out.error = "truncated header"; return out;
         }
 
-        // NOT OUR FILE, AND THAT IS THE END OF IT. No fallback layout, no
-        // reinterpretation of these eight bytes as anything else.
-        for (std::size_t i = 0; i < sizeof(noise_marking_magic); ++i) {
-            if (header[i] != noise_marking_magic[i]) {
-                out.error = "bad magic (not a noise-markings file, or written "
-                    "before the versioned format) -- re-export it from the "
+        // ---- TWO LAYOUTS, TOLD APART BY THE FIRST EIGHT BYTES ----------------
+        //
+        // CURRENT: the magic, a version, a row count, then rows of `columns`
+        // doubles indexed by Column.
+        //
+        // LEGACY (pre-versioned, no magic): a bare uint64 row count, then rows
+        // of SIX doubles -- start_sample, end_sample, start_sec, end_sec,
+        // channel_code, annotation_code -- the first six Columns, in the same
+        // order. These files predate threshold/blanking storage, so a
+        // parameter-edit span in one has no recorded value: both read NaN, the
+        // same sentinel the current format uses for "not applicable", so the
+        // GUI treats it as an unset override rather than defaulting it.
+        //
+        // The legacy count and the magic are both 8 bytes, so one read decides.
+        // A non-magic header is accepted as a legacy count ONLY if the file is
+        // exactly that many six-double rows long -- anything else is a damaged
+        // or foreign file, refused rather than read as rows.
+        //
+        // CHANNEL CODES ARE READ WITH TODAY'S TABLE. A legacy file written
+        // before the writer and reader channel maps were unified may use codes
+        // that mean a different channel now; that cannot be detected here.
+        bool isCurrent = true;
+        for (std::size_t i = 0; i < sizeof(noise_marking_magic); ++i)
+            if (header[i] != noise_marking_magic[i]) { isCurrent = false; break; }
+
+        if (!isCurrent) {
+            constexpr uint64_t kLegacyColumns = 6;
+            uint64_t count = 0;
+            std::memcpy(&count, header, sizeof(count));
+            if (count > (1ull << 22)
+                || fileSize != sizeof(count) + count * kLegacyColumns * sizeof(double)) {
+                out.error = "bad magic, and not a legacy noise-markings file either "
+                    "(size does not match its row count) -- re-export it from the "
                     "marking GUI";
                 return out;
             }
+            out.read = true;
+            out.legacy = true;
+            out.rows.reserve(static_cast<std::size_t>(count));
+            for (uint64_t r = 0; r < count; ++r) {
+                std::array<double, kLegacyColumns> row{};
+                if (!f.read(reinterpret_cast<char*>(row.data()),
+                    sizeof(double) * kLegacyColumns)) {
+                    out.error = "truncated at row " + std::to_string(r);
+                    break;
+                }
+                Row rw;   // threshold / blanking_ms stay NaN
+                rw.start_sample = row[start_location_in_samples];
+                rw.end_sample = row[end_location_in_samples];
+                rw.start_sec = row[start_location_in_seconds];
+                rw.end_sec = row[end_location_in_seconds];
+                rw.channel_code = static_cast<uint8_t>(row[channel_marked]);
+                rw.annotation_code = static_cast<uint8_t>(row[marking_type]);
+                out.rows.push_back(rw);
+            }
+            std::fprintf(stderr, "[noise-markings] %s is a legacy (pre-versioned) "
+                "file: %zu row(s), no threshold/blanking. Re-export it from the "
+                "marking GUI to upgrade it.\n", path.c_str(), out.rows.size());
+            return out;
         }
 
         uint32_t version = 0;
@@ -154,9 +218,11 @@ namespace noise_markings {
         // A version mismatch is a hard stop, not a best-effort read: guessing
         // the row stride is how spans land at the wrong times while looking
         // plausible.
-        if (version != noise_marking_version) {
-            out.error = "version " + std::to_string(version)
-                + " != " + std::to_string(noise_marking_version);
+        if (version != noise_marking_version
+            && version != noise_marking_version_same_layout) {
+            out.error = "version " + std::to_string(version) + " is not "
+                + std::to_string(noise_marking_version) + " or "
+                + std::to_string(noise_marking_version_same_layout);
             return out;
         }
         // A COUNT OFF DISK IS NOT A COUNT UNTIL IT IS CHECKED. reserve() on an

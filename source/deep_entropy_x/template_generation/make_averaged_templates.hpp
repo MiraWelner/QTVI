@@ -25,6 +25,7 @@
 #include "template_generation/template_io.hpp"
 #include "template_generation/bank_reload.hpp"
 #include "template_generation/nsvt_detect.hpp"
+#include "annealing/beat_times.hpp"   // Splice: bin position -> recording sample
 #include "noise_marking_gui/annotation_types.hpp"
 
 #include "noise_marking_gui/user_annotation_handler.h"
@@ -129,6 +130,10 @@ struct TemplateInfo {
     // kept so beat_times can turn a template's members into recording
     // times after ecg_res is gone. Empty for a lead with no beats.
     std::array<std::vector<size_t>, 3> ecg_slice_of_row;
+    // The pulse twin: ppg_slice_of_row[k] is the R-pair ordinal of row k of
+    // kept_beats_by_channel["PPG"] (PPGTemplatesResult::keptSlices), the row
+    // space pulse-bank members index.
+    std::vector<uint32_t> ppg_slice_of_row;
 };
 
 
@@ -145,14 +150,42 @@ namespace morphology_writer {
 
 // NOT static. A template already has vague linkage, so `static` only gave
 // every translation unit its own copy of an identical instantiation.
+//
+// TWO SAMPLE SPACES, AND THEY ARE NOT THE SAME ONE. A span's start/end are
+// samples of the WHOLE RECORDING (exportMarkings writes seconds-from-start x
+// rate). rPeaks are positions in THIS BIN'S spliced signal, which starts at 0
+// in every bin. Comparing them directly applied the markings for the first
+// minutes of the recording to the first minutes of EVERY bin -- on a record
+// marked heavily near its start, most of every bin's beats read R Peak Noise,
+// left every average, and the viewer had no template to draw.
+//
+// So each R peak is first mapped back to its recording sample through the
+// bin's splice (ecg_bin_indexs, the inverse beat_times::Splice applies). No
+// splice -> no way to place the beats, so nothing is marked rather than
+// something marked in the wrong place.
 template <class PeakVec>
 std::vector<uint8_t> sliceMarkCodes(
     const PeakVec& rPeaks, uint32_t n_slices,
     const std::vector<noise_markings::Span>& spans,
-    uint64_t bin_index)
+    uint64_t bin_index,
+    const std::vector<std::pair<uint64_t, uint64_t>>& ecg_bin_indexs)
 {
     std::vector<uint8_t> mark(n_slices, 0);
     if (rPeaks.empty() || spans.empty()) return mark;
+    if (ecg_bin_indexs.empty()) {
+        std::fprintf(stderr, "  [marks] bin %llu has no splice ranges; its beats "
+            "cannot be placed in the recording, so none are marked\n",
+            static_cast<unsigned long long>(bin_index));
+        return mark;
+    }
+    const beat_times::Splice splice(ecg_bin_indexs,
+        std::numeric_limits<uint64_t>::max());
+    std::vector<int64_t> recSample(std::min<std::size_t>(n_slices, rPeaks.size()), -1);
+    for (std::size_t k = 0; k < recSample.size(); ++k) {
+        uint64_t orig = 0;
+        if (splice.original(static_cast<uint64_t>(rPeaks[k]), orig))
+            recSample[k] = static_cast<int64_t>(orig);
+    }
 
     const uint8_t ppg = noise_markings::code_for_channel("PPG");
 
@@ -166,9 +199,9 @@ std::vector<uint8_t> sliceMarkCodes(
             if (row.code == static_cast<int>(s.annotation_code)) { t = &row; break; }
         if (!t || t->paramEdit || t->invertEdit) continue;
 
-        for (uint32_t k = 0; k < n_slices && k < rPeaks.size(); ++k) {
-            const int64_t r = static_cast<int64_t>(rPeaks[k]);
-            if (r < s.start_sample || r > s.end_sample) continue;
+        for (std::size_t k = 0; k < recSample.size(); ++k) {
+            const int64_t r = recSample[k];
+            if (r < 0 || r < s.start_sample || r > s.end_sample) continue;
             if (mark[k] == 0) mark[k] = s.annotation_code;   // first in file order wins
         }
     }
@@ -259,9 +292,9 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         ppg_r_cols = std::move(ppg_res.rCol);
         ppg_kept_slices = std::move(ppg_res.keptSlices);
 
-        // <stem>_ptt.csv. PPG only: CreatePulseTemplates measures the same
-        // for ABP / ART, but the log is the ECG-to-PPG transit time.
-        ptt_log::write(ppg_res.ptt);
+        // No <stem>_ptt.csv any more: its per-beat data (kept, R -> peak,
+        // R -> 50% point) is in <stem>_peak_locations_all_beats.csv, joined to
+        // each CH1 R, from this same stash (AnalysisJob::ppgTransit).
         ptt_log::stashTransit("PPG", ppg_res.ptt);   // written with the arterial ones
 
         for (size_t i = 0; i < n; ++i)
@@ -386,6 +419,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         for (int c = 0; c < 3; ++c)
             if (i < ecg_res.kept_index[c].size())
                 info.ecg_slice_of_row[c] = ecg_res.kept_index[c][i];
+        if (i < ppg_kept_slices.size()) info.ppg_slice_of_row = ppg_kept_slices[i];
 
         if (ecg_good) {
             const size_t nR = (i < wave_data.size()) ? wave_data[i].ch1.raw.size() : 0;
@@ -464,7 +498,8 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 // partition. See BeatGroup::partition.
                 if (!noiseSpans.spans.empty())
                     ji.mark_code = sliceMarkCodes(wave_data[i].ch1.raw,
-                        ji.n_slices, noiseSpans.spans, i);
+                        ji.n_slices, noiseSpans.spans, i,
+                        wave_data[i].ecg_bin_indexs);
 
                 info.joint = jbank::buildBinBank(ji);
                 info.joint_valid = true;
