@@ -158,6 +158,9 @@ static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<analysis
     // refuse. <stem>_beats.bin is no substitute: the worker thread below has
     // not written this run's copy yet when the window opens.
     viewer.setBeats(&job->beats);
+    viewer.setBeatTimes(&job->beatTimes);      // template_markings.csv template_start_s / _end_s
+    viewer.setRecordSleep(&job->sleep);        // template_markings.csv pct_*
+    viewer.setEcgRowShifts(&job->ecgRowShifts);   // dashed ECG extremes on each alignment's frame
     QEventLoop loop;
     QObject::connect(&viewer, &TemplateViewerWindow::finished, &loop, &QEventLoop::quit, Qt::QueuedConnection);
 

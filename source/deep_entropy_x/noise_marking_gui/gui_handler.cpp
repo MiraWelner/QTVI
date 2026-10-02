@@ -472,6 +472,17 @@ noise_marking_gui::noise_marking_gui(QWidget* parent)
         resetUnpinnedGains(); handle_data_plot(); updateAmpogramCursor();
         });
 
+    // Marking scope from the keyboard: w = mark one channel, s = mark all
+    // channels. Through the radio itself, so its toggled handler sets the scope
+    // exactly as a click would, and a disabled radio (nothing markable) stays
+    // unreachable from the key too.
+    new QShortcut(QKeySequence(Qt::Key_W), this, [this]() {
+        if (ui->mark_one_chan->isEnabled()) ui->mark_one_chan->setChecked(true);
+        });
+    new QShortcut(QKeySequence(Qt::Key_S), this, [this]() {
+        if (ui->mark_all_chan->isEnabled()) ui->mark_all_chan->setChecked(true);
+        });
+
     const QList<QChartView*> allCharts = {
        ui->ecg_axis_1, ui->ecg_axis_2, ui->ecg_axis_3,ui->kors_matrix,
        ui->ppg_axis, ui->accel_axis, ui->abp_axis,

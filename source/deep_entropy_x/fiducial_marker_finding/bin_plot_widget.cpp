@@ -13,6 +13,7 @@
 #include <QAction>
 #include "feature_marks.hpp"
 #include <QPainter>
+#include <QFontMetricsF>
 #include <QPainterPath>
 #include <QMouseEvent>
 #include <QStringList>
@@ -476,6 +477,8 @@ void BinPlotWidget::setData(const std::vector<double>& ppg,
     m_nPpgBeats = nPpgBeats;
     m_ppg = ppg;
     m_ppgIqr = ppgIqr;
+    m_ppgOutliers.clear();   // they belonged to the previous trace
+    m_ecgOutliers.clear();
     m_ecg = ecg;
     ecg_std = ecgIqr;
     m_rPeakSample = rPeakSample;
@@ -500,6 +503,7 @@ void BinPlotWidget::setEcgData(const std::vector<double>& ecg,
     m_nEcgBeats = nEcgBeats;
     m_ecg = ecg;
     ecg_std = ecgIqr;
+    m_ecgOutliers.clear();   // measured on the old alignment; caller re-sets
     m_rPeakSample = rPeakSample;
     m_rAnchor[static_cast<size_t>(Channel::Ecg)] = rPeakSample;
 
@@ -522,6 +526,7 @@ void BinPlotWidget::setPpgData(const std::vector<double>& ppg,
     if (ppg.empty()) return;
     m_ppg = ppg;
     m_ppgIqr = ppgIqr;
+    m_ppgOutliers.clear();   // measured against the old trace; caller re-sets
     if (nPpgBeats >= 0) m_nPpgBeats = nPpgBeats;
 
     m_pdetValid = false;   // pulse trace changed; the ECG detection did not
@@ -956,8 +961,17 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     if (m_binIndex == 0) restPart += "  (time in seconds)";
 
     QStringList counts;
-    if (m_nEcgBeats > 0) counts << QString("ECG beats %1").arg(m_nEcgBeats);
-    if (m_nPpgBeats > 0) counts << QString("PPG beats %1").arg(m_nPpgBeats);
+    // ONE LINE, "# beats: m ECG (n%)  o PPG (p%)". m and o are the template's
+    // full membership; n and p its KEPT SHARE, kept / (kept + removed), where
+    // kept is cleanCount. Whole percent; the bracket is omitted when unknown,
+    // and a channel with no beats is left off the line.
+    auto keptPct = [](int n, int kept) -> QString {
+        if (n <= 0 || kept < 0) return QString();
+        return QString(" (%1%)").arg(
+            static_cast<int>(std::lround(100.0 * std::min(kept, n) / n)));
+        };
+    if (m_nEcgBeats > 0) counts << QString("%1 ECG%2").arg(m_nEcgBeats).arg(keptPct(m_nEcgBeats, m_nEcgKept));
+    if (m_nPpgBeats > 0) counts << QString("%1 PPG%2").arg(m_nPpgBeats).arg(keptPct(m_nPpgBeats, m_nPpgKept));
 
     // Baselines rather than a rect: margin_top is 20 px and two 8 pt lines are
     // ~22, so an AlignBottom rect would push the second line into the plot
@@ -979,6 +993,24 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         QColor(30,   80, 190),   // blue
         QColor(120,  40, 160),   // purple
     };
+    // ---- THE TITLE LINE SHRINKS TO FIT THE PANEL -------------------------
+    //
+    // The template's hh:mm:ss span made the line long enough to run off a
+    // narrow panel. The whole line steps down together from 8 pt, so the bin
+    // number and the gray run keep one baseline and one size, to a 5 pt floor
+    // (below that it is unreadable; past it the line clips as it used to).
+    // Only this line: the counts line below goes back to 8 pt.
+    const QFont titleBase = p.font();
+    {
+        const double avail = static_cast<double>(w - margin_left - 2);
+        const QString full = binPart + "  " + restPart;
+        QFont tf = titleBase;
+        for (double pt = 8.0; pt >= 5.0; pt -= 0.25) {
+            tf.setPointSizeF(pt);
+            if (QFontMetricsF(tf, this).horizontalAdvance(full) <= avail) break;
+        }
+        p.setFont(tf);
+    }
     p.setPen(kBinTitleColours[
         ((m_binIndex % 3) + 3) % 3]);   // % twice: m_binIndex may be negative
     p.drawText(margin_left, 9, binPart);
@@ -990,9 +1022,10 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         p.setPen(QColor(150, 150, 150));
         p.drawText(QPointF(x, 9), restPart);
     }
+    p.setFont(titleBase);
     if (!counts.isEmpty()) {
         p.setPen(QColor(150, 150, 150));
-        p.drawText(margin_left, 19, counts.join("   "));
+        p.drawText(margin_left, 22, "# Beats: " + counts.join("  "));
     }
 
     // Y-axis rules for the normalized traces:
@@ -1003,6 +1036,15 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
     // Left axis (ECG) and right axis (pulse) each follow this rule.
     double yLo = 0, yHi = 0;
     compute_visible_range(m_ecg, yLo, yHi);
+    // The dashed ECG extremes vote, as the pulse ones do, so the tallest beat
+    // is never cut off at the frame.
+    if (m_showEcgTrace)
+        for (const auto& ob : m_ecgOutliers) {
+            double l = 0.0, h = 0.0;
+            if (ob.size() >= 2 && compute_visible_range(ob, l, h)) {
+                yLo = std::min(yLo, l); yHi = std::max(yHi, h);
+            }
+        }
     if (yLo > 0.0) yLo = 0.0;
 
     // ---- TWO PULSE RANGES, NOT ONE --------------------------------------
@@ -1035,6 +1077,10 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
             else { lo = std::min(lo, l); hi = std::max(hi, h); }
         };
     if (m_hasPPG) merge_into(m_ppg, pLo, pHi, havePpg);
+    // The dashed extreme pulses vote too, so the tallest one is never cut off
+    // at the frame -- showing how far the cohort spreads is the point of them.
+    if (m_hasPPG && m_showPpgTrace)
+        for (const auto& ob : m_ppgOutliers) merge_into(ob, pLo, pHi, havePpg);
     merge_into(m_abp, aLo, aHi, haveArt);
     merge_into(m_art, aLo, aHi, haveArt);
     merge_into(m_artPulm, aLo, aHi, haveArt);
@@ -1206,6 +1252,15 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         draw_iqr_band(p, m_ecg, ecg_std, x0, margin_top, ph, dx, n,
             yLo, yHi, color_iqrband_ecg);
 
+        // The kept beats with the largest and smallest P-to-T range: dashed,
+        // thinner, same colour, under the trace so the median stays on top.
+        {
+            QPen dash(with_trace_alpha(ecg_trace_color), 1.0, Qt::DashLine);
+            for (const auto& ob : m_ecgOutliers)
+                draw_trace_fixed_scale(p, ob, x0, margin_top, ph, dx, dash,
+                    static_cast<int>(ob.size()), yLo, yHi);
+        }
+
         draw_trace_fixed_scale(p, m_ecg, x0, margin_top, ph, dx,
             QPen(with_trace_alpha(ecg_trace_color), 1.5), n, yLo, yHi);
     }
@@ -1217,6 +1272,14 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         if (dx > 0.0) {
             draw_iqr_band(p, m_ppg, m_ppgIqr, x0, margin_top, ph, dx, n,
                 pLo, pHi, color_iqrband_ppg);
+            // The kept pulses with the highest and lowest peak: dashed, thinner,
+            // same colour, UNDER the template line so the median stays on top.
+            {
+                QPen dash(with_trace_alpha(ppg_trace_color), 1.0, Qt::DashLine);
+                for (const auto& ob : m_ppgOutliers)
+                    draw_trace_fixed_scale(p, ob, x0, margin_top, ph, dx, dash,
+                        static_cast<int>(ob.size()), pLo, pHi);
+            }
             draw_trace_fixed_scale(p, m_ppg, x0, margin_top, ph, dx,
                 QPen(with_trace_alpha(ppg_trace_color), 1.5), n, pLo, pHi);
         }

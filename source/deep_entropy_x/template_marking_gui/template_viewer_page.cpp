@@ -104,8 +104,12 @@ TemplateViewerWindow::leadsForBinTemplate(const time_bin& b,
         // around.
         const std::vector<double>* traceIqr = nullptr;
         int nMembers = 0;
+        int nClean = -1;
         uint8_t labelCode = tbank::kUnlabeled;
         uint8_t splitSource = tbank::kSplitUnknown;
+        // This slot's member rows, for the time span in the label. Null on
+        // every path that draws no panel.
+        const std::vector<uint32_t>* memberRows = nullptr;
 
         // ---- A THIN PULSE COHORT SUPPRESSES THIS LEAD ------------------
         //
@@ -190,8 +194,10 @@ TemplateViewerWindow::leadsForBinTemplate(const time_bin& b,
             trace = svT.tmpl;
             traceIqr = svT.iqr;
             nMembers = t.memberCount();
+            nClean = t.cleanCount();
             labelCode = t.label_code;
             splitSource = t.split_source;
+            memberRows = &t.members;
             // subtype is no longer read here: tbank::letterRanks applies the
             // confirmed-subtype rule itself, from the same BankTemplate.
         }
@@ -242,6 +248,31 @@ TemplateViewerWindow::leadsForBinTemplate(const time_bin& b,
         // Lead::nMembers and the widget prints it as the ECG beat count.
         QString lbl = QString("%1 %2_%3").arg(kNames[c]).arg(cls).arg(letter);
 
+        // WHEN THIS TEMPLATE'S BEATS HAPPENED, right after its name: earliest
+        // and latest member R peak as hh:mm:ss from the start of the record --
+        // the same start/end template_markings.csv writes, from the same
+        // BeatTimes. Hours run past 24 rather than wrapping, since this is
+        // elapsed time, not clock time. Omitted when no member has a time.
+        if (m_beatTimes && memberRows) {
+            double t0 = 0.0, t1 = 0.0;
+            bool any = false;
+            for (const uint32_t row : *memberRows) {
+                const double t = m_beatTimes->at(c, static_cast<size_t>(b.index), row);
+                if (!std::isfinite(t)) continue;
+                if (!any || t < t0) t0 = t;
+                if (!any || t > t1) t1 = t;
+                any = true;
+            }
+            if (any) {
+                auto hms = [](double sec) {
+                    const long long s = static_cast<long long>(std::floor(sec));
+                    return QString::asprintf("%02lld:%02lld:%02lld",
+                        s / 3600, (s / 60) % 60, s % 60);
+                    };
+                lbl += QString(" %1%2%3").arg(hms(t0)).arg(QChar(0x2013)).arg(hms(t1));
+            }
+        }
+
         // WHICH SIGNAL SPLIT THIS TEMPLATE OFF. A joint partition spawns a
         // group when one channel rejects the best existing one, and whether
         // that channel was an ECG lead or the pulse is the difference between
@@ -255,7 +286,7 @@ TemplateViewerWindow::leadsForBinTemplate(const time_bin& b,
         if (const char* src = tbank::splitSourceLabel(splitSource))
             lbl += QString("  split %1").arg(src);
 
-        out.push_back({ trace, traceIqr, c, lbl, nMembers });
+        out.push_back({ trace, traceIqr, c, lbl, nMembers, nClean });
     }
     return out;
 }
@@ -677,6 +708,13 @@ void TemplateViewerWindow::showPage() {
 
         std::vector<BinPlotWidget*> group;
 
+        // The dashed pulse extremes (see ppgExtremeTraces). Once per column --
+        // every lead's panel draws the same pulse -- against the same foot
+        // pulseTraceForSlot normalizes the trace with.
+        const std::vector<std::vector<double>> ppgOutliers = hasPPG
+            ? ppgExtremeTraces(gi, template_index, *ppgSlot, ppgSlot->pulse_marks.onset)
+            : std::vector<std::vector<double>>{};
+
         for (int li = 0; li < (int)leads.size(); ++li) {
             auto* pw = new BinPlotWidget(gi, leads[li].channelIndex, leads[li].label);
             pw->setChannelRate(BinPlotWidget::Channel::Ecg, m_sampleRate);
@@ -845,6 +883,9 @@ void TemplateViewerWindow::showPage() {
 
             pw->setData(ppgN, ppgIqr, ecgN, ecgIqr, rPeak,
                 static_cast<int>(nEcgBeats), nPpgForColumn);
+            pw->setEcgKept(leads[li].nClean);
+            pw->setPpgKept(hasPPG ? ppgSlot->cleanCount() : -1);
+            pw->setPpgOutliers(ppgOutliers);
 
             pw->setHasPPG(hasPPG);
 
@@ -917,6 +958,9 @@ void TemplateViewerWindow::showPage() {
             //  a drawn-frame wall.)
             connect(pw, &BinPlotWidget::badRToggled, this, &TemplateViewerWindow::onBadRToggled);
             pw->setTemplateIndex(template_index);
+            // After the template index, the traces and the bars are all in:
+            // the P-to-T window is read off this panel's own bars/detection.
+            pw->setEcgOutliers(ecgExtremeTraces(pw, gi, lead_index, template_index));
 
             if (lead_index >= 0 && lead_index <= 2 && template_index >= 0 && template_index < m_bins[gi].ecg_bank[lead_index].size())
             {
@@ -1070,6 +1114,139 @@ tbank::BankMarkerSet TemplateViewerWindow::barsForPanel(const BinPlotWidget* pw,
     out.q_onset = pick(anchor_view::q_begin, lm.q_onset);
     out.s_end = pick(anchor_view::j_point, lm.s_end);
     out.t_end = pick(anchor_view::t_end, lm.t_end);
+    return out;
+}
+
+// ---- THE DASHED ECG EXTREMES ------------------------------------------------
+//
+// WHICH BEATS. This lead's slot's KEPT rows, members_clean -- the rows every
+// alignment's per-slot average is the median of (alignTemplatesFromCache) --
+// or members when nothing was excluded. Read from the in-memory beat matrix,
+// per_channel_beats[CHn][bin], which is the R-base frame those averages were
+// shifted FROM.
+//
+// ON THE ALIGNMENT'S OWN FRAME, EXACTLY. Every alignment, R included, built
+// its averages by shifting each row by its own sub-sample amount and taking
+// the median. Those shifts (m_ecgRowShifts, kept from the build) are applied
+// here with the same linear resample align_beat_matrix uses -- value at column
+// j read from j - shift, NaN where either neighbour is -- so a dashed beat sits
+// where it sat in the median. NaN shift = the build left that row unmoved, and
+// so does this. No shift table for this alignment and bin: nothing is drawn,
+// rather than a beat on the wrong frame.
+//
+// WHICH TWO. The largest and the smallest P-to-T range: max - min of the
+// shifted row from P onset to T end, the panel's own bars where it draws
+// them and its own detection where it does not (a forced alignment hides some
+// bars). Q onset stands in for a template with no P wave. A row covering under
+// half that window is not ranked.
+//
+// DRAWN AS THE TRACE IS: notched with maybeNotchTrace and divided by the same
+// QRS reference normalizeEcgTrace uses for this slot, and blanked wherever the
+// average itself has no value.
+std::vector<std::vector<double>> TemplateViewerWindow::ecgExtremeTraces(
+    const BinPlotWidget* pw, int binIdx, int lead, int slot) const
+{
+    std::vector<std::vector<double>> out;
+    if (!pw || !m_beatsInMemory || !m_ecgRowShifts) return out;
+    if (binIdx < 0 || binIdx >= (int)m_bins.size() || lead < 0 || lead > 2 || slot < 0) return out;
+    const time_bin& b = m_bins[binIdx];
+    const tbank::TemplateBank& bank = b.ecg_bank[lead];
+    if (slot >= bank.size()) return out;
+    const tbank::template_of_all_signals& t = bank.templates[slot];
+    const std::vector<uint32_t>& cohort = !t.members_clean.empty() ? t.members_clean : t.members;
+    if (cohort.empty()) return out;
+
+    const AnchorType a = currentGridAnchor();
+    const SlotView sv = slotView(b, lead, slot, a);
+    if (!sv.valid || !sv.tmpl) return out;
+    const std::vector<double>& avg = *sv.tmpl;
+    const std::size_t W = avg.size();
+
+    static const char* kKeys[3] = { "CH1", "CH2", "CH3" };
+    const auto bit = m_beatsInMemory->per_channel_beats.find(kKeys[lead]);
+    if (bit == m_beatsInMemory->per_channel_beats.end()
+        || binIdx >= (int)bit->second.size()) return out;
+    const std::vector<std::vector<double>>& rows = bit->second[binIdx];
+
+    const auto sit = m_ecgRowShifts->find(static_cast<int>(a));
+    if (sit == m_ecgRowShifts->end() || binIdx >= (int)sit->second.size()) return out;
+    const std::vector<double>& shifts = sit->second[binIdx][lead];
+    if (shifts.empty()) return out;
+
+    // The P-to-T window, in the drawn frame.
+    const tbank::BankMarkerSet bars = barsForPanel(pw, b, lead, slot);
+    const FeatureMarks::TemplateLandmarks& lm = pw->detectedLandmarks();
+    auto pickCol = [&](double bar, double det) {
+        if (bar >= 0.0) return bar;
+        return (lm.valid && det >= 0.0) ? det : -1.0;
+        };
+    double start = pickCol(bars.p_begin, lm.p_begin);
+    if (start < 0.0) start = pickCol(bars.q_onset, lm.q_onset);   // no P wave
+    const double stop = pickCol(bars.t_end, lm.t_end);
+    if (start < 0.0 || !(stop > start)) return out;
+    const std::size_t k0 = static_cast<std::size_t>(std::ceil(start));
+    const std::size_t k1 = std::min(W - 1, static_cast<std::size_t>(std::floor(stop)));
+    if (k0 > k1) return out;
+    const std::size_t minFinite = std::max<std::size_t>(1, (k1 - k0 + 1) / 2);
+
+    // align_beat_matrix's resample, verbatim in effect, then cut to the average.
+    auto shifted = [&](uint32_t r, std::vector<double>& dst) -> bool {
+        if (r >= rows.size()) return false;
+        const std::vector<double>& row = rows[r];
+        const int Wsh = static_cast<int>(row.size());
+        const double sh = (r < shifts.size()) ? shifts[r] : std::numeric_limits<double>::quiet_NaN();
+        dst.assign(W, std::numeric_limits<double>::quiet_NaN());
+        if (!std::isfinite(sh) || std::abs(sh) < 1e-3) {
+            for (std::size_t j = 0; j < W && j < row.size(); ++j)
+                if (!std::isnan(avg[j])) dst[j] = row[j];
+            return true;
+        }
+        for (int j = 0; j < Wsh && j < static_cast<int>(W); ++j) {
+            if (std::isnan(avg[static_cast<std::size_t>(j)])) continue;
+            const double src = static_cast<double>(j) - sh;
+            const int s0 = static_cast<int>(std::floor(src));
+            const int s1 = s0 + 1;
+            if (s0 < 0 || s1 >= Wsh) continue;
+            const double v0 = row[static_cast<std::size_t>(s0)];
+            const double v1 = row[static_cast<std::size_t>(s1)];
+            if (std::isnan(v0) || std::isnan(v1)) continue;
+            const double f = src - static_cast<double>(s0);
+            dst[static_cast<std::size_t>(j)] = v0 + f * (v1 - v0);
+        }
+        return true;
+        };
+
+    double hiR = -1.0, loR = std::numeric_limits<double>::infinity();
+    uint32_t hiRow = 0, loRow = 0;
+    bool any = false;
+    std::vector<double> beat;
+    for (const uint32_t r : cohort) {
+        if (!shifted(r, beat)) continue;
+        double mx = -std::numeric_limits<double>::infinity();
+        double mn = std::numeric_limits<double>::infinity();
+        std::size_t n = 0;
+        for (std::size_t k = k0; k <= k1; ++k) {
+            if (!std::isfinite(beat[k])) continue;
+            mx = std::max(mx, beat[k]); mn = std::min(mn, beat[k]); ++n;
+        }
+        if (n < minFinite) continue;
+        const double range = mx - mn;
+        if (range > hiR) { hiR = range; hiRow = r; }
+        if (range < loR) { loR = range; loRow = r; }
+        any = true;
+    }
+    if (!any) return out;
+
+    auto draw = [&](uint32_t r) {
+        if (!shifted(r, beat)) return;
+        std::vector<double> disp = normalizeEcgTrace(
+            maybeNotchTrace(beat, m_sampleRate, -1.0), b, lead, slot);
+        for (std::size_t k = 0; k < disp.size() && k < beat.size(); ++k)
+            if (std::isnan(beat[k])) disp[k] = std::numeric_limits<double>::quiet_NaN();
+        out.push_back(std::move(disp));
+        };
+    draw(hiRow);
+    if (loRow != hiRow) draw(loRow);
     return out;
 }
 
@@ -1382,6 +1559,7 @@ void TemplateViewerWindow::reskinGridForAnchor(int onlyBin, int onlySlot) {
                 static_cast<uint64_t>(std::max(0, L->nMembers));
 
             pw->setEcgData(ecgN, ecgIqr, rPeak, static_cast<int>(nEcgBeats));
+            pw->setEcgKept(L->nClean);
 
             // Glyphs + the R glyph column follow the anchor too; these helpers
             // already read currentGridAnchor(). The draggable bars they also
@@ -1389,6 +1567,9 @@ void TemplateViewerWindow::reskinGridForAnchor(int onlyBin, int onlySlot) {
             // click time (before any move) equal what is on screen, so nothing
             // the operator is holding jumps.
             applyTemplateToWidget(pw, m_bins[gi], lead_index, templateIndex);
+            // The new alignment's average, so the new alignment's shifts and
+            // its P-to-T window.
+            pw->setEcgOutliers(ecgExtremeTraces(pw, gi, lead_index, templateIndex));
         }
     }
 }

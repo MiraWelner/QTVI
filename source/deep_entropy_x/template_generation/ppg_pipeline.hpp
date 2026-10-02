@@ -4,10 +4,12 @@
 //
 // Continuous-recording PPG signal conditioning. Three stages:
 //
-//   iemEnvelope    per-template Iterative Envelope Mean baseline (data-adaptive;
-//                  splines an upper/lower envelope through a single pulse's own
-//                  extrema and iterates the mean-subtraction to leave the slow
-//                  profile underneath).
+//   iemEnvelope    Iterative Envelope Mean (E-5.4). THE one IEM: ppg_dicrotic's
+//                  Tier 1 calls this, it is not reimplemented there.
+//   naturalCubicSpline
+//                  the cubic spline E-5.3 cites as `splineThrough`. Exposed
+//                  because the IEM's envelopes and E-1's DC baseline both need
+//                  it and there must be exactly one.
 //   dcEnvelope     E-1 (Section 6.1). Cubic spline through the diastolic troughs
 //                  of a continuous trace, then a 2nd-order Butterworth low-pass
 //                  at 0.1 Hz applied zero-phase (forward-backward).
@@ -23,20 +25,55 @@
 
 namespace ppg_pipeline {
 
-    // ---- Iterative Envelope Mean (per template pulse) -------------------
+    // ---- Natural cubic spline (E-5.3's `splineThrough`) -----------------
+    //
+    // Through knots (xs, ys), xs strictly increasing, sampled at every integer
+    // in [0, N). Tails outside the knot span are left NaN; callers needing full
+    // coverage anchor the endpoints themselves (see dcEnvelope, and
+    // envelopeThrough inside the IEM).
+    std::vector<double> naturalCubicSpline(const std::vector<int>& xs,
+        const std::vector<double>& ys, int N);
+
+    // ---- Iterative Envelope Mean (E-5.4) --------------------------------
+    //
+    // ONE IEM FOR THE WHOLE PIPELINE. ppg_dicrotic's Tier 1 calls this.
+    //
+    // THREE CORRECTNESS POINTS, each of which independently broke an earlier
+    // revision of this function. All three are now as E-5.4 specifies:
+    //
+    //   * KNOTS ARE EXTREMA OF THE FIRST DERIVATIVE, located by SIGN CHANGES
+    //     OF THE SECOND (ppg_dicrotic::extremaOfFirstDerivative). This
+    //     previously used a plain 3-point extremum test on the signal itself,
+    //     which is a different and smaller knot set.
+    //   * THE NON-STATIONARY COMPONENT IS THE FINAL RESIDUAL, not the
+    //     converged mean. `nonStationary` is where the dicrotic notch lives.
+    //     The old field names had this inverted: `imf` was the residual and
+    //     `envelope` the trend, which reads as the opposite of E-5.4.
+    //   * THE STOP CRITERION is the ABSOLUTE difference of successive residual
+    //     mean-square energies, |E{R_{i-1}^2} - E{R_i^2}| < beta. It was
+    //     Huang's normalised SD ratio, which E-5.4 names as the wrong form.
+    //
+    // Envelopes are built on the SG-SMOOTHED signal; subtraction is from the
+    // UNSMOOTHED current iterate. "Unfiltered" in the source distinguishes the
+    // iterate from its smoothed version -- it does NOT mean the original input,
+    // and subtracting from the original every round does not converge.
+    //
+    // Convergence takes 1 to 3 iterations. maxIter = 12 is a safety ceiling; a
+    // count at the ceiling indicates a problem.
     struct IemEnvelope {
-        std::vector<double> envelope;   // slow trend underneath (pulse - imf)
-        std::vector<double> imf;        // extracted pulsatile component
-        std::vector<double> upper;      // last-iteration upper envelope
-        std::vector<double> lower;      // last-iteration lower envelope
+        std::vector<double> nonStationary;   // final residual: the DN is here
+        std::vector<double> stationary;      // accumulated envelope means
+        std::vector<double> upper;           // last-iteration upper envelope
+        std::vector<double> lower;           // last-iteration lower envelope
         int  iterations = 0;
+        bool converged = false;
         bool ok = false;
     };
 
-    // maxIter caps the sift; sdThresh is the Huang stop criterion
-    // (sum (h_prev - h)^2 / sum h_prev^2 < sdThresh; 0.2-0.3 is classic).
-    IemEnvelope iemEnvelope(const std::vector<double>& pulse,
-        int maxIter = 12, double sdThresh = 0.2);
+    /// fs is needed for the Savitzky-Golay derivative bank the knots come from.
+    /// beta is E-5.4's stopping threshold on the residual mean-square energy.
+    IemEnvelope iemEnvelope(const std::vector<double>& pulse, double fs,
+        int maxIter = 12, double beta = 0.1);
 
     // ---- E-1: DC envelope (continuous trace) ----------------------------
     // troughs are the diastolic-trough sample indices; fs is the PPG rate (Hz).

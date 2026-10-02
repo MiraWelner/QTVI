@@ -95,6 +95,11 @@ struct TemplateInfo {
     // R-pair interval: peak = max in [R1,R2], foot = min in [R1,peak].
     // -1 when no PPG for this bin.
     int ppg_peak_col = -1;
+    // The dicrotic notch in this bin's pulse-template columns, and how many
+    // member beats had one. From the E-5 windowed pass over the continuous
+    // signal, reduced as the median of the member beats' notch columns.
+    double ppg_notch_col = -1.0;
+    int ppg_notch_n = 0;
     // The pulse template's measured R column (PulseTemplateBin::rCol). -1 =
     // unmeasurable, and then the channel has no R-relative time axis.
     int ppg_r_col = -1;
@@ -118,6 +123,12 @@ struct TemplateInfo {
     std::map<std::string, tbank::ChannelOutput> bank_by_channel;
     jbank::BinBankOutput joint;
     bool joint_valid = false;
+    // ROW -> SLICE per ECG lead: ecg_slice_of_row[c][k] is the R-pair ordinal
+    // that produced row k of kept_beats_by_channel[CHc] -- the row space bank
+    // members index. A copy of EcgTemplateResult::kept_index for this bin,
+    // kept so beat_times can turn a template's members into recording
+    // times after ecg_res is gone. Empty for a lead with no beats.
+    std::array<std::vector<size_t>, 3> ecg_slice_of_row;
 };
 
 
@@ -223,6 +234,8 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     vector<vector<vector<double>>> ppg_kept(n);
     vector<int> ppg_peak_cols(n, -1);
     vector<int> ppg_onset_cols(n, -1);
+    vector<double> ppg_notch_cols(n, -1.0);
+    vector<int> ppg_notch_ns(n, 0);
     // Per bin, the pulse template's measured R column; see
     // alignment::PpgBeatSet::r_cols for why it cannot be a constant.
     vector<int> ppg_r_cols(n, -1);
@@ -241,6 +254,8 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         ppg_kept = std::move(ppg_res.kept);
         ppg_peak_cols = std::move(ppg_res.peakCol);
         ppg_onset_cols = std::move(ppg_res.footCol);
+        ppg_notch_cols = std::move(ppg_res.notchCol);
+        ppg_notch_ns = std::move(ppg_res.notch_n);
         ppg_r_cols = std::move(ppg_res.rCol);
         ppg_kept_slices = std::move(ppg_res.keptSlices);
 
@@ -366,6 +381,11 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         EcgChannelResult* const chRes[3] =
         { &ecg_res.ch1, &ecg_res.ch2, &ecg_res.ch3 };
         ChannelTemplates* const chDst[3] = { &info.ch1, &info.ch2, &info.ch3 };
+
+        // Copied, not moved: the slicing fingerprint below reads kept_index too.
+        for (int c = 0; c < 3; ++c)
+            if (i < ecg_res.kept_index[c].size())
+                info.ecg_slice_of_row[c] = ecg_res.kept_index[c][i];
 
         if (ecg_good) {
             const size_t nR = (i < wave_data.size()) ? wave_data[i].ch1.raw.size() : 0;
@@ -624,6 +644,8 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
             info.ppg_template_std = ppg_template_stds[i];
             info.ppg_peak_col = ppg_peak_cols[i];
             info.ppg_onset_col = ppg_onset_cols[i];
+            info.ppg_notch_col = ppg_notch_cols[i];
+            info.ppg_notch_n = ppg_notch_ns[i];
             info.ppg_r_col = ppg_r_cols[i];
             if (i < ppg_kept.size()) {
                 info.ppg_n_beats = ppg_kept[i].size();

@@ -769,7 +769,7 @@ double FeatureMarks::steepest_slope_in(const std::vector<double>& v, int lo, int
 }
 
 FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters,
-    curve_fit::PeakFitMode peakMode)
+    curve_fit::PeakFitMode peakMode, double measuredNotchCol)
 {
     PpgFiducials g;
     const int N = static_cast<int>(v.size());
@@ -778,16 +778,16 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     // ---- A RATE IS REQUIRED, AND IT MUST BE THIS CHANNEL'S ---------------
     //
     // ppgRate is not a reporting unit here: it sizes the peak and foot fit
-    // windows (which take a rate because the windows are DURATIONS), places
-    // the dicrotic seed at peak + 0.12 * ppgRate, and is handed to
+    // windows (which take a rate because the windows are DURATIONS), sets the
+    // Savitzky-Golay window length the notch detector's knots come from
+    // (E-5.2: nc = 25 at 256 Hz, 49 at 500 Hz), and is handed to
     // ppg_deriv::buildDerivatives and computeIndices. A wrong rate does not
     // mislabel a correct answer -- it searches the wrong span.
     //
     // NON-POSITIVE IS A BAIL, NOT A SUBSTITUTION. 0 means the channel is
-    // absent; peakHalfwidth(0) is a window of no samples and 0.12 * 0 puts the
-    // dicrotic seed on the peak, so every landmark would come back defined and
-    // wrong. An empty PpgFiducials is -1 throughout, which callers read as
-    // "not detected".
+    // absent; peakHalfwidth(0) is a window of no samples, so every landmark
+    // would come back defined and wrong. An empty PpgFiducials is -1
+    // throughout, which callers read as "not detected".
     if (!(ppgRate > 0.0)) {
         fprintf(stderr, "[ppg] bail: non-positive rate %g\n", ppgRate);
         return g;
@@ -943,15 +943,42 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
         // as no mark rather than as a mark at the wall.
         g.end = (seed >= 0) ? refine_trough(seed, lo0, g.end_cand) : -1.0;
     }
-    g.dicrotic = cld(g.peak + 0.12 * ppgRate);
-    if (g.end > g.peak && g.dicrotic >= g.end)
-        g.dicrotic = cld(g.peak + 0.5 * (g.end - g.peak));   // midway peak->end
-    g.notch_found = false;
-    g.dn_tier = 0;
-    g.dn_confidence = 0.0;
-
+    // ---- THE DICROTIC NOTCH: READ, NOT DETECTED ------------------------
+    //
+    // measuredNotchCol comes from the E-5 windowed pass over the continuous
+    // recording -- see the declaration. NOTHING HERE DETECTS A NOTCH, and
+    // nothing may: E-5 has no procedure for finding one on a ~1 s template,
+    // and it states that single-pulse operation is not validated by the source
+    // and must not be assumed equivalent. The windowed pass measures a notch
+    // per cardiac cycle on the signal; the median over a template's member
+    // beats is what arrives here.
+    //
+    // t80 IS COMPUTED FIRST so the no-notch fallback can be placed relative to
+    // it. It needs only the peak and the end, both resolved above. peak2 still
+    // runs after the notch, since it searches from it.
     g.t80 = amplitude_crossing(v, iFloor(g.peak), iCeil(g.end), 0.80);
     if (g.t80 < 0) g.t80 = cld(0.5 * (g.peak + g.end));
+    {
+        const bool have = (measuredNotchCol >= 0.0)
+            && (measuredNotchCol <= static_cast<double>(Wc - 1));
+        g.notch_found = have;
+        if (have) {
+            g.dicrotic = measuredNotchCol;
+            g.dn_tier = 1;
+        }
+        else {
+            // HALFWAY BETWEEN PEAK AND t80, so the circle and the bar have
+            // somewhere to sit; notch_found = false says it is not a
+            // measurement. Half the interval rather than a fixed offset:
+            // peak + 0.12 * rate is 120 ms at any heart rate and on a short
+            // cycle lands past t80, outside the interval it belongs in.
+            // -1 when t80 collapses onto the peak, leaving nothing to bisect.
+            g.dicrotic = (g.t80 > g.peak) ? cld(0.5 * (g.peak + g.t80)) : -1.0;
+            g.dn_tier = 3;
+        }
+        g.dn_confidence = std::numeric_limits<double>::quiet_NaN();
+    }
+
     g.peak2 = detect_ppg_peak2(v, iFloor(g.dicrotic), g.t80, iFloor(g.end));
     {
         const double vp = sample_at(v, g.peak);
@@ -1197,30 +1224,6 @@ int FeatureMarks::detect_ppg_end(const std::vector<double>& pulse) {
     if (peak < 0 || peak >= N - 2) return std::max(0, N - 1);
     const int end = trough_in(pulse, peak + 1, N - 1);
     return (end >= 0) ? end : std::max(0, N - 1);
-}
-
-int FeatureMarks::detect_ppg_dicrotic(const std::vector<double>& pulse, int peak) {
-    const int N = static_cast<int>(pulse.size());
-    peak = std::clamp(peak, 0, std::max(0, N - 1));
-    const int end = detect_ppg_end(pulse);
-    if (peak < 0 || end < 0 || end - peak < 10)
-        return std::clamp((peak + end) / 2, 0, N - 1);
-
-    const int margin = std::max(2, (end - peak) / 10);
-    const int lo = peak + margin;
-    const int hi = end - 1;
-    if (hi - lo < 3)
-        return std::clamp(peak + (end - peak) / 3, 0, N - 1);
-
-    int best = -1;
-    double bestVal = 1e300;
-    for (int i = lo + 1; i < hi; ++i) {
-        if (pulse[i] <= pulse[i - 1] && pulse[i] <= pulse[i + 1]) {
-            if (pulse[i] < bestVal) { bestVal = pulse[i]; best = i; }
-        }
-    }
-    if (best < 0) return std::clamp(peak + (end - peak) / 3, 0, N - 1);
-    return best;
 }
 
 double FeatureMarks::detect_ppg_peak2(const std::vector<double>& v, int sysPeak, double t80, int end)
@@ -1540,12 +1543,13 @@ void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col
 
 
 void FeatureMarks::seed_pulse_bank_template(const std::vector<double>& tmpl, double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters,
-    curve_fit::PeakFitMode peakMode) {
+    curve_fit::PeakFitMode peakMode, double measuredNotchCol) {
     out = tbank::BankPulseMarkerSet{};
     const int W = static_cast<int>(tmpl.size());
     if (W < 3 || ppgRate <= 0.0) return;
 
-    const PpgFiducials pf = detect_ppg_fiducials(tmpl, W, ppgRate, heightMeters, peakMode);
+    const PpgFiducials pf = detect_ppg_fiducials(tmpl, W, ppgRate, heightMeters, peakMode,
+        measuredNotchCol);
     out.onset_auto = pf.onset;
     out.onset = pf.onset;
     out.peak_auto = pf.peak;

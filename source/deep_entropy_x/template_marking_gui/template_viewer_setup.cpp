@@ -398,7 +398,13 @@ void TemplateViewerWindow::seedOneBin(time_bin& b) const
     // (composePulseMarks). Before restoreMarkersFrom, so saved bars land on top.
     for (tbank::template_of_all_signals& t : b.ppg_bank.templates) {
         if (t.tmpl.empty()) continue;
-        FeatureMarks::seed_pulse_bank_template(t.tmpl, m_ppgRateHz, t.pulse_marks);
+        // THE NOTCH IS PASSED IN, NOT DETECTED. b.ppg_notch_col is the E-5
+        // windowed pass's measurement, reduced to this bin's pulse template.
+        // Without it every template falls back to the peak->t80 midpoint
+        // placeholder, because the detector no longer finds notches itself.
+        FeatureMarks::seed_pulse_bank_template(t.tmpl, m_ppgRateHz, t.pulse_marks,
+            std::numeric_limits<double>::quiet_NaN(), curve_fit::PeakFitMode::Auto,
+            b.ppg_notch_col);
 
         // ---- THE SAME GUARANTEE AT THIS ENTRY POINT ---------------------
         //
@@ -423,9 +429,14 @@ void TemplateViewerWindow::seedOneBin(time_bin& b) const
                 }
                 if (best >= 0) pm.peak_auto = static_cast<double>(best);
             }
-            if (pm.dicrotic < 0.0 && pm.peak_auto >= 0.0 && m_ppgRateHz > 0.0)
-                pm.dicrotic = std::min(pm.peak_auto + 0.12 * m_ppgRateHz,
-                    static_cast<double>(n - 1));
+            // NO DICROTIC FALLBACK. This used to place the bar at
+            // peak + 0.12*rate whenever the detector found nothing, which is
+            // where every stray notch bar in the viewer came from: the glyph
+            // drew a circle (correctly, not found) while the bar sat at a
+            // fabricated position between the peak and t80, and the two
+            // disagreed. The notch bar is now seeded from
+            // seed_pulse_bank_template's detector result and nowhere else, so
+            // an undetected notch leaves pm.dicrotic at -1 and draws no bar.
         }
     }
 

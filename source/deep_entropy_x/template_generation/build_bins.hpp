@@ -97,6 +97,8 @@ namespace template_generation_detail {
         bt.ch3_n_beats_raw = info.ch3.n_beats_raw;
         bt.ppg_n_beats = info.ppg_n_beats;
         bt.ppg_peak_col = info.ppg_peak_col;
+        bt.ppg_notch_col = info.ppg_notch_col;
+        bt.ppg_notch_n = info.ppg_notch_n;
         bt.ppg_onset_col = info.ppg_onset_col;
         bt.ppg_r_col = info.ppg_r_col;
 
@@ -138,6 +140,8 @@ namespace template_generation_detail {
         bt.ch3_n_beats_raw = info.ch3.n_beats_raw;
         bt.ppg_n_beats = info.ppg_n_beats;
         bt.ppg_peak_col = info.ppg_peak_col;
+        bt.ppg_notch_col = info.ppg_notch_col;
+        bt.ppg_notch_n = info.ppg_notch_n;
         bt.ppg_onset_col = info.ppg_onset_col;
         bt.ppg_r_col = info.ppg_r_col;
 

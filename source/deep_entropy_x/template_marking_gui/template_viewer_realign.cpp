@@ -374,12 +374,15 @@ void TemplateViewerWindow::composePulseMarks(tbank::template_of_all_signals& slo
     //   peak     argmax in (onset, end)
     //                                -- the systolic apex is the largest value
     //                                   in the cycle, always computable
-    //   dicrotic peak + 0.12 * rate  -- the same seed detect_ppg_fiducials
-    //                                   starts its own notch search from
     //
-    // ORDER MATTERS: end before peak (peak searches up to end), peak before
-    // dicrotic (dicrotic is measured from peak). Each step fills only what is
-    // still missing, so a real detection is never displaced.
+    // THE DICROTIC NOTCH IS NOT BACKFILLED. It has no computable-by-definition
+    // seed: it either exists in the signal or it does not, and the E-5
+    // detector is the only thing entitled to say which. An undetected notch
+    // stays at -1.
+    //
+    // ORDER MATTERS: end before peak (peak searches up to end). Each step
+    // fills only what is still missing, so a real detection is never
+    // displaced.
     //
     // NO FLAG DISTINGUISHES THESE FROM DETECTIONS. A defaulted landmark and a
     // measured one are the same number to every consumer -- the CSV, the .bin,
@@ -402,11 +405,9 @@ void TemplateViewerWindow::composePulseMarks(tbank::template_of_all_signals& slo
             }
             if (best >= 0) slot.pulse_marks.peak_auto = static_cast<double>(best);
         }
-        if (slot.pulse_marks.dicrotic < 0.0 && slot.pulse_marks.peak_auto >= 0.0
-            && ppgRateHz > 0.0) {
-            const double d = slot.pulse_marks.peak_auto + 0.12 * ppgRateHz;
-            slot.pulse_marks.dicrotic = std::min(d, static_cast<double>(n - 1));
-        }
+        // NO DICROTIC FALLBACK -- same reason as in seedOneBin: a bar at
+        // peak + 0.12*rate is a fabricated position, and it disagreed with the
+        // circle the glyph drew. An undetected notch leaves dicrotic at -1.
     }
 }
 
@@ -597,6 +598,148 @@ bool TemplateViewerWindow::restorePulseAsBuilt(int binIdx, int templateIdx)
     return true;
 }
 
+// ---- THE DASHED PULSE EXTREMES ---------------------------------------------
+//
+// WHICH BEATS. The slot's KEPT cohort -- members_clean, the set the average
+// was taken over, or members when nothing was excluded -- read from the same
+// in-memory beat rows the re-stack uses (beatsForSlot). Those rows are on the
+// slot's own column axis (no re-level moves a row sideways), so column k of a
+// row and column k of slot.tmpl are the same instant.
+//
+// LEVELLED AS THE STACK ON SCREEN LEVELLED THEM. Once a variant has been
+// adopted (m_ppgRealigned), slot.tmpl IS that variant's median, and the
+// variant recorded the amount it subtracted from every row (row_v_shift). The
+// same subtraction puts a beat exactly where it sat when the median was taken.
+// A row the variant skipped (NaN shift) was not in the median and is not a
+// candidate. Before any variant is shown -- the page's first paint, before
+// realignAllVisiblePulses -- the as-built median is on screen, and each row is
+// levelled to it at the foot column instead.
+//
+// WHICH TWO, AND WHY IT FLIPS WITH THE ALIGNMENT. The levelling point is where
+// every beat agrees, so it carries no information; the spread is at the other
+// end of the upstroke.
+//   Foot-levelled (Foot variant, any foot %, or as-built): the beats with the
+//     HIGHEST and LOWEST systolic peak, searched from the foot bar to the
+//     dicrotic bar (the systolic peak precedes the notch), to the end bar when
+//     there is no notch, to the end of the template when there is neither --
+//     bounded so the next beat's upstroke in the slice's tail is never taken.
+//   Peak-levelled (Peak variant): the beats with the HIGHEST and LOWEST foot,
+//     each row's own trough within the same +-window about the foot bar the
+//     re-level searches (ppg_realign::searchHalfWinFor).
+//
+// DRAWN ON THE TRACE'S OWN SCALE. pulseTraceForSlot normalizes the template
+// against ITS foot value; every beat is normalized against that same value
+// (pulse_norm with the template's foot), not against its own -- dividing by a
+// beat's own foot would re-zero it there and undo a peak levelling. Notched
+// first with the same call. Columns where the template has no value are
+// blanked, so a beat never draws past the template's extent.
+std::vector<std::vector<double>> TemplateViewerWindow::ppgExtremeTraces(int binIdx,
+    int templateIdx, const tbank::template_of_all_signals& slot, double footIdx) const
+{
+    std::vector<std::vector<double>> out;
+    if (slot.tmpl.empty() || !(footIdx >= 0.0)) return out;
+
+    // The display reference, exactly as pulseTraceForSlot computes it.
+    const std::vector<double> tmplSrc = maybeNotchTrace(slot.tmpl, m_ppgRateHz, footIdx);
+    const double dispFoot = normalize_features::sample_y(tmplSrc, footIdx);
+    const double gref = m_pulseGlobalRef[0];
+    if (!normalize_features::pulse_trace_normalizable(dispFoot, gref)) return out;
+    const double tmplFoot = normalize_features::sample_y(slot.tmpl, footIdx);
+    if (!std::isfinite(tmplFoot)) return out;
+
+    const std::vector<uint32_t>& cohort = !slot.members_clean.empty()
+        ? slot.members_clean : slot.members;
+    const ppg_realign::SlotBeats beats = beatsForSlot(binIdx, cohort, "PPG");
+    if (beats.empty()) return out;
+    const std::size_t W = slot.tmpl.size();
+
+    // Which stack is on screen, and its per-row shifts.
+    const tbank::PulseAnchor shown = pulseVariantToShow();
+    const tbank::PulseVariant& pv = slot.pulseVariant(shown);
+    const bool variantOnScreen = m_ppgRealigned.count(slotKey(binIdx, templateIdx)) > 0
+        && pv.ok() && pv.row_v_shift.size() == pv.row_ids.size();
+    std::map<uint32_t, double> vShiftOf;
+    if (variantOnScreen)
+        for (std::size_t k = 0; k < pv.row_ids.size(); ++k)
+            vShiftOf[pv.row_ids[k]] = pv.row_v_shift[k];
+    const bool peakLevelled = variantOnScreen && shown == tbank::PulseAnchor::Peak;
+
+    // The search window for the measured end.
+    std::size_t k0 = 0, k1 = 0;
+    if (peakLevelled) {
+        const int hw = ppg_realign::searchHalfWinFor(m_ppgRateHz);
+        const double lo = std::max(0.0, footIdx - hw);
+        const double hi = std::min(static_cast<double>(W - 1), footIdx + hw);
+        k0 = static_cast<std::size_t>(std::ceil(lo));
+        k1 = static_cast<std::size_t>(std::floor(hi));
+    }
+    else {
+        const tbank::BankPulseMarkerSet& pm = slot.pulse_marks;
+        const double stop = (pm.dicrotic > footIdx) ? pm.dicrotic
+            : (pm.end > footIdx) ? pm.end
+            : static_cast<double>(W - 1);
+        k0 = static_cast<std::size_t>(std::ceil(footIdx));
+        k1 = std::min(W - 1, static_cast<std::size_t>(std::floor(stop)));
+    }
+    if (k0 > k1) return out;
+
+    // One row, levelled, cut to the template and blanked where it is blank.
+    auto levelled = [&](std::size_t i, std::vector<double>& lev) -> bool {
+        const std::vector<double>& row = beats.row(i);
+        double sub = 0.0;   // amount SUBTRACTED, the row_v_shift convention
+        if (variantOnScreen) {
+            const auto it = vShiftOf.find(beats.ids[i]);
+            if (it == vShiftOf.end() || !std::isfinite(it->second)) return false;
+            sub = it->second;
+        }
+        else {
+            const double rowFoot = normalize_features::sample_y(row, footIdx);
+            if (!std::isfinite(rowFoot)) return false;
+            sub = rowFoot - tmplFoot;
+        }
+        lev.assign(W, std::numeric_limits<double>::quiet_NaN());
+        const std::size_t n = std::min(W, row.size());
+        for (std::size_t k = 0; k < n; ++k)
+            if (!std::isnan(row[k]) && !std::isnan(slot.tmpl[k])) lev[k] = row[k] - sub;
+        return true;
+        };
+
+    double hiV = -std::numeric_limits<double>::infinity();
+    double loV = std::numeric_limits<double>::infinity();
+    std::size_t hiI = 0, loI = 0;
+    bool any = false;
+    std::vector<double> lev;
+    for (std::size_t i = 0; i < beats.size(); ++i) {
+        if (!levelled(i, lev)) continue;
+        // Peak-levelled: this row's foot, its trough in the window.
+        // Foot-levelled: this row's systolic peak, its maximum in the window.
+        double v = peakLevelled ? std::numeric_limits<double>::infinity()
+            : -std::numeric_limits<double>::infinity();
+        for (std::size_t k = k0; k <= k1; ++k) {
+            if (!std::isfinite(lev[k])) continue;
+            v = peakLevelled ? std::min(v, lev[k]) : std::max(v, lev[k]);
+        }
+        if (!std::isfinite(v)) continue;
+        if (v > hiV) { hiV = v; hiI = i; }
+        if (v < loV) { loV = v; loI = i; }
+        any = true;
+    }
+    if (!any) return out;
+
+    auto draw = [&](std::size_t i) {
+        if (!levelled(i, lev)) return;
+        const std::vector<double> src = maybeNotchTrace(lev, m_ppgRateHz, footIdx);
+        std::vector<double> disp(src.size(), std::numeric_limits<double>::quiet_NaN());
+        for (std::size_t k = 0; k < src.size(); ++k)
+            if (!std::isnan(src[k]) && k < lev.size() && !std::isnan(lev[k]))
+                disp[k] = normalize_features::pulse_norm(src[k], dispFoot, gref);
+        out.push_back(std::move(disp));
+        };
+    draw(hiI);
+    if (loI != hiI) draw(loI);
+    return out;
+}
+
 // The display half of a re-stack: normalize this slot through the shared
 // pulse-display path and push it into every panel of its column, in place.
 // Factored out because the restore path needs exactly the same push and
@@ -615,10 +758,16 @@ void TemplateViewerWindow::pushPulseToPanels(int binIdx, int templateIdx,
 
     const std::vector<BinPlotWidget*>* col = panelsForColumn(binIdx, templateIdx);
 
+    // Once per column, not per panel: every lead's panel draws the same pulse.
+    const std::vector<std::vector<double>> outliers =
+        ppgExtremeTraces(binIdx, templateIdx, slot, footIdx);
+
     if (col) {
         for (auto* pw : *col) {
             if (!pw) continue;
             pw->setPpgData(trace, iqr, slot.memberCount());
+            pw->setPpgKept(slot.cleanCount());
+            pw->setPpgOutliers(outliers);
             // AND THE THREE BARS, NOT JUST THE TRACE. adoptPulsePair has
             // re-seeded pulse_marks on the new waveform, but the panels still
             // hold the columns applyBankTemplateToWidget pushed BEFORE the

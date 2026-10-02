@@ -25,6 +25,8 @@
 #include "template_generation/template_io.hpp"
 #include "template_generation/envelope_report.hpp"
 #include "template_generation/beat_substitute.hpp"
+#include "annealing/beat_times.hpp"
+#include "annealing/record_sleep.hpp"
 
 #include "annealing/anneal_handler.hpp"
 #include "config_file_handling/config.hpp"
@@ -69,6 +71,19 @@ namespace analysis_job {
         bool ecg3_inverted = false;
         std::string error;                          // set by finalize on failure
         template_structs::TemplateFile r_aligned_template;      //  R-pass template to be reused by re-alignment
+        // Two separate things, both built once in prepare and read by the viewer
+        // for template_markings.csv. Neither is written to any .bin.
+        //   beatTimes: recording seconds of every kept ECG beat, [lead][bin][row].
+        //   sleep:     the record's staging; present() is false when it has none.
+        beat_times::BeatTimes beatTimes;
+        record_sleep::RecordSleep sleep;
+        // Every alignment's per-row horizontal shift, in samples, exactly as
+        // align_beat_matrix applied it to build that alignment's per-slot
+        // averages: [anchor tag][bin][lead][kept row], NaN = row not moved.
+        // Copied out of ecg_move_log, which clears its store when it writes the
+        // move log -- before the viewer opens. Read by the viewer to draw an
+        // individual beat on an anchored average's own frame.
+        std::map<int, std::vector<std::array<std::vector<double>, 3>>> ecgRowShifts;
     };
 
 
@@ -291,6 +306,44 @@ namespace analysis_job {
         job.beats = std::move(fast.beats);
         job.info = std::move(fast.info);
 
+        // BEAT TIMES, HERE: job.peakResults' R peaks and splices are exactly the
+        // ones this build sliced on, and job.info still holds each bin's row ->
+        // slice map. The original data .bin's header gives the ECG1 rate and
+        // length the annealer cut the bins from; see beat_times.hpp.
+        //
+        // SLEEP, SEPARATELY, from the same file's stage block. Independent of the
+        // beat times: a failure in one leaves the other intact.
+        {
+            const data_bin_header::Header hdr = data_bin_header::read(binPath.string());
+            if (!hdr.ok)
+                std::cerr << "  [beat times] could not read the header of " << binPath.string()
+                << "; times use ecg_upsample_rate, no sleep staging\n";
+            try {
+                std::vector<std::array<std::vector<size_t>, 3>> sliceOfRow(job.info.size());
+                for (size_t i = 0; i < job.info.size(); ++i)
+                    sliceOfRow[i] = job.info[i].ecg_slice_of_row;
+                const bool useHdr = hdr.ok && hdr.ecgRateHz() > 0.0;
+                job.beatTimes = useHdr
+                    ? beat_times::build(job.peakResults, sliceOfRow, hdr.ecgRateHz(), hdr.ecgLength())
+                    : beat_times::build(job.peakResults, sliceOfRow, job.rates.ecg);
+            }
+            catch (const std::exception& e) {
+                std::cerr << "  [beat times] failed (" << e.what()
+                    << "); template_start_s / template_end_s will be blank\n";
+                job.beatTimes = beat_times::BeatTimes{};
+            }
+            try {
+                job.sleep = record_sleep::read(binPath.string(), hdr);
+            }
+            catch (const std::exception& e) {
+                std::cerr << "  [sleep] failed (" << e.what() << ")\n";
+                job.sleep = record_sleep::RecordSleep{};
+            }
+            std::cerr << "  [sleep] " << (job.sleep.present()
+                ? "staging found, epoch " + std::to_string(job.sleep.epoch_sec) + " s"
+                : std::string("no sleep staging in this record; pct_* columns blank")) << "\n";
+        }
+
         // Applied inside the build above; reported here. The reloaded banks
         // are already in job.tmpl, so the r_aligned_template snapshot below,
         // which every anchor aligns from, carries them.
@@ -307,6 +360,10 @@ namespace analysis_job {
             alignTemplatesFromCache(atmpl, job.beats, job.rates, a);
 
             const int tag = static_cast<int>(a);
+
+            // This anchor's per-row shifts, before ecg_move_log::write clears them.
+            for (const ecg_move_log::HorizontalAnchor& h : ecg_move_log::g_horizontal)
+                if (h.label == anchor_view::label(a)) { job.ecgRowShifts[tag] = h.bins; break; }
 
             auto it = atmpl.raw_anchors.find(tag);
             if (it != atmpl.raw_anchors.end())

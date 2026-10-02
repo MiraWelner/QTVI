@@ -190,8 +190,22 @@ public:
     // upsample_for_fit::peakCandidates, which is the same guarded contest the
     // ECG peaks run, so the Fit-Peaks radio has to reach it or the pulse is
     // the one channel the control silently does not apply to.
+    // measuredNotchCol: THE DICROTIC NOTCH, ALREADY MEASURED, in this
+    // waveform's own columns (time_bin::ppg_notch_col). This function does NOT
+    // detect a notch and must not: E-5 has no procedure for finding one on a
+    // ~1 s template, and it states that single-pulse operation is not
+    // validated by the source and must not be assumed equivalent. The windowed
+    // pass measures one per cardiac cycle on the continuous signal; the median
+    // over a template's member beats is what arrives here.
+    //
+    // < 0 means no member beat had one. The notch is then placed HALFWAY
+    // BETWEEN THE PEAK AND t80 with notch_found = false, so the glyph draws a
+    // circle there rather than an X and the bar has somewhere to be dragged
+    // from. That is a placeholder, and notch_found is how every reader already
+    // tells it from a measurement.
     static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters = NAN,
-        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
+        double measuredNotchCol = -1.0);
     static double amplitude_crossing(const std::vector<double>& v, int a, int b, double frac);
     static double crossing_at_level(const std::vector<double>& v, int a, int b, double target);
     static int trough_in(const std::vector<double>& v, int lo, int hi);
@@ -205,7 +219,6 @@ public:
     static double detect_ppg_peak(const std::vector<double>& pulse,
         double ppgRate,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
-    static int detect_ppg_dicrotic(const std::vector<double>& pulse, int peak);
     static double detect_ppg_peak2(const std::vector<double>& v, int sysPeak, double t80, int end);
     static int detect_ppg_end(const std::vector<double>& pulse);
 
@@ -226,5 +239,6 @@ public:
 
     static void seed_pulse_bank_template(const std::vector<double>& tmpl,
         double ppgRate, tbank::BankPulseMarkerSet& out, double heightMeters = NAN,
-        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
+        double measuredNotchCol = -1.0);
 };

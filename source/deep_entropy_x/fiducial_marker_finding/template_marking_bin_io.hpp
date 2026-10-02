@@ -72,11 +72,14 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 #include "template_generation\template_structs.hpp"
 #include "fiducial_marker_finding\feature_marks.hpp"
 #include "template_generation\bank_structs.hpp"
 #include "fiducial_marker_finding\anchor_view.hpp"
+#include "annealing/beat_times.hpp"
+#include "annealing/record_sleep.hpp"
 
 // (MarkingsCsvSection deleted. It had three values and only EcgAndPulse was
 //  ever passed -- see the note at the top of writeTemplateMarkingsCsv. With
@@ -361,6 +364,20 @@ struct time_bin {
     // above ~75. -1 = unmeasurable, and a channel with -1 is left OFF the
     // shared axis rather than drawn at a guess.
     double ppg_r_construct = -1;
+    // THE DICROTIC NOTCH of this bin's pulse template, in its own columns, and
+    // how many member beats had one. Measured by the E-5 windowed pass over
+    // the continuous recording and reduced here as the median of the member
+    // beats' notch columns -- NOT detected on the template, which E-5 has no
+    // procedure for and explicitly declines to validate. Carried through
+    // template_io for the same reason ppg_r_construct is: it is not derivable
+    // from the template.
+    //
+    // -1 = no member beat had a notch. ppg_notch_n is the contributor count,
+    // i.e. this template's detectability: a notch resting on 1 of 30 beats is
+    // as "found" as one resting on 30 of 30, and this is the only field that
+    // says which.
+    double ppg_notch_col = -1;
+    int    ppg_notch_n = 0;
     double abp_r_construct = -1;
     double art_r_construct = -1;
     double art_pulm_r_construct = -1;
@@ -443,6 +460,8 @@ inline std::vector<time_bin> binsFromTemplateFile(const template_structs::Templa
         dst.ppg_n_beats = src.ppg_n_beats;
         // template_io carries these as whole columns; widening is exact.
         dst.ppg_r_construct = src.ppg_r_col;
+        dst.ppg_notch_col = src.ppg_notch_col;
+        dst.ppg_notch_n = src.ppg_notch_n;
         dst.abp_r_construct = src.abp_r_col;
         dst.art_r_construct = src.art_r_col;
         dst.art_pulm_r_construct = src.art_pulm_r_col;
@@ -1597,7 +1616,11 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
     double artRateHz,
     double artPulmRateHz,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
-    curve_fit::FitMode fitMode = curve_fit::FitMode::Auto)
+    curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
+    // From analysis_job::prepare. Null beatTimes = start/end blank; null or
+    // absent sleep = pct_* blank. The header is the same either way.
+    const beat_times::BeatTimes* beatTimes = nullptr,
+    const record_sleep::RecordSleep* sleep = nullptr)
 {
     constexpr bool wantEcg = true;
     constexpr bool wantPulse = true;
@@ -1847,6 +1870,12 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
         // vpg / apg / jpg are NOT here: see
         // ppg_derivative_automated_markers and writePpgDerivativeCsv.
     }
+    // ---- TEMPLATE TIME AND SLEEP, LAST ON THE ROW --------------------------
+    // At the END so no existing column moves for a reader that indexes by
+    // position. Both from THIS template's own member beats (members, the same
+    // set n_members counts). See the row code below for how they combine.
+    f << ",template_start_s,template_end_s";
+    for (const char* n : record_sleep::kStageColumn) f << ',' << n;
     f << '\n';
 
     // ---- row loop ----------------------------------------------------------
@@ -2354,6 +2383,43 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                     }
                 }
 
+                // TEMPLATE TIME, THEN SLEEP FROM THAT TIME. Two inputs that know
+                // nothing of each other; this is the only place they meet.
+                //   start/end: earliest / latest member beat, seconds from the
+                //     start of the record (beat_times.hpp).
+                //   pct_*: percent of TIMED members whose time falls in each
+                //     stage (record_sleep.hpp). A beat in an unscored epoch
+                //     counts in the denominator and in no stage, so a row can
+                //     sum below 100; all five blank when there is no staging.
+                // The pre-bank slot-0 fallback has no members, so it reads blank.
+                {
+                    constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
+                    double tStart = kNaN, tEnd = kNaN;
+                    std::array<uint32_t, record_sleep::kNumStages> nStage{};
+                    uint32_t nTimed = 0;
+                    const bool haveSleep = sleep && sleep->present();
+                    if (beatTimes && haveBankTmpl) {
+                        for (const uint32_t row : bank.templates[slot].members) {
+                            const double t = beatTimes->at(c, static_cast<size_t>(b.index), row);
+                            if (!std::isfinite(t)) continue;
+                            if (nTimed == 0 || t < tStart) tStart = t;
+                            if (nTimed == 0 || t > tEnd) tEnd = t;
+                            ++nTimed;
+                            if (haveSleep) {
+                                const int st = sleep->stageAt(t);
+                                if (st >= 0 && st < record_sleep::kNumStages) ++nStage[st];
+                            }
+                        }
+                    }
+                    auto cell = [&](double v) { f << ','; if (std::isfinite(v)) f << v; };
+                    cell(tStart);
+                    cell(tEnd);
+                    for (int k = 0; k < record_sleep::kNumStages; ++k)
+                        cell((haveSleep && nTimed > 0)
+                            ? 100.0 * static_cast<double>(nStage[k]) / static_cast<double>(nTimed)
+                            : kNaN);
+                }
+
                 f << '\n';
             }   // slot
         }     // channel
@@ -2372,13 +2438,15 @@ inline void writeTemplateMarkingsCsv(const std::string& path,
     double artRateHz,
     double artPulmRateHz,
     curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
-    curve_fit::FitMode fitMode = curve_fit::FitMode::Auto)
+    curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
+    const beat_times::BeatTimes* beatTimes = nullptr,
+    const record_sleep::RecordSleep* sleep = nullptr)
 {
     std::ofstream f(path);
     if (!f.is_open())
         throw std::runtime_error("cannot open for write: " + path);
     writeTemplateMarkingsCsv(f, bins, fileID, sampleRateHz, ppgRateHz,
-        abpRateHz, artRateHz, artPulmRateHz, peakMode, fitMode);
+        abpRateHz, artRateHz, artPulmRateHz, peakMode, fitMode, beatTimes, sleep);
 }
 
 // ===========================================================================

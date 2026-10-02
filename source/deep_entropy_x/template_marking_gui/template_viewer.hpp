@@ -117,6 +117,13 @@ public:
     void setLeadPolarity(const LeadPolarity& pol) { m_polarity = pol; }
 
     void setBeats(const template_structs::BeatsFile* beats) { m_beatsInMemory = beats; }
+    // For template_markings.csv's trailing columns. Borrowed like setBeats: the
+    // job owns both and outlives the window. Null leaves the columns blank.
+    void setBeatTimes(const beat_times::BeatTimes* t) { m_beatTimes = t; }          // template_start_s / _end_s
+    void setRecordSleep(const record_sleep::RecordSleep* s) { m_recordSleep = s; }  // pct_*
+    // Per-row ECG alignment shifts, [anchor tag][bin][lead][row]; the job owns
+    // them (analysis_job::AnalysisJob::ecgRowShifts). Null = no ECG extremes.
+    void setEcgRowShifts(const std::map<int, std::vector<std::array<std::vector<double>, 3>>>* s) { m_ecgRowShifts = s; }
 
     void loadSubject(const template_structs::TemplateFile& tf,
         const QString& templateDir, const QString& markingPath,
@@ -165,6 +172,7 @@ private:
         int channelIndex;
         QString label;
         int nMembers = 0;
+        int nClean = -1;   // cleanCount of the same template; -1 = unknown
     };
 
     std::vector<Lead> leadsForBin(const time_bin& b) const;
@@ -243,6 +251,25 @@ private:
     void pushPulseToPanels(int binIdx, int templateIdx,
         bool alsoFocus = true);
 
+    // The dashed extremes for one pulse column, ready to draw. Of the slot's
+    // KEPT beats: with a FOOT-levelled stack on screen, the beats with the
+    // highest and lowest systolic peak; with a PEAK-levelled stack, the beats
+    // with the highest and lowest foot. Each is levelled the way the stack on
+    // screen levelled it and normalized against the template's own foot, so it
+    // sits on the trace's axis. One entry when both are the same beat; empty
+    // when the beats or the foot are unavailable.
+    std::vector<std::vector<double>> ppgExtremeTraces(int binIdx, int templateIdx,
+        const tbank::template_of_all_signals& slot, double footIdx) const;
+
+    // The dashed extremes for one ECG panel, ready to draw: of the slot's KEPT
+    // beats, the ones with the largest and smallest P-to-T range (max - min
+    // from P onset, or Q onset where there is no P, to T end), each shifted
+    // by exactly the sub-sample amount the alignment on screen shifted it when
+    // its average was built, then notched and normalized as the trace is.
+    // Empty when the shifts, the beats or the P/T window are unavailable.
+    std::vector<std::vector<double>> ecgExtremeTraces(const BinPlotWidget* pw,
+        int binIdx, int lead, int slot) const;
+
     // ---- THE FOOT BAR'S OWN GESTURE, ON THE OTHER AXIS ------------------
     //
     // Level every member row to a common baseline at the column the operator
@@ -257,6 +284,9 @@ private:
     bool relevelPulseAtFoot(int binIdx, int templateIdx, double footCol, bool announce = true);
 
     const template_structs::BeatsFile* m_beatsInMemory = nullptr;
+    const beat_times::BeatTimes* m_beatTimes = nullptr;          // see setBeatTimes
+    const record_sleep::RecordSleep* m_recordSleep = nullptr;    // see setRecordSleep
+    const std::map<int, std::vector<std::array<std::vector<double>, 3>>>* m_ecgRowShifts = nullptr;   // see setEcgRowShifts
     // One slot's cohort rows, borrowed from m_beatsInMemory. Per slot,
     // uncached, memory only; see template_viewer_realign.cpp.
     ppg_realign::SlotBeats beatsForSlot(int binIdx,

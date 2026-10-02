@@ -236,6 +236,29 @@ public:
         int nPpgBeats = 0);
     bool hasPPG() const { return m_hasPPG; }
 
+    // How many of the template's beats survived into its average
+    // (cleanCount). Printed beside the beat count as a percent of it, i.e.
+    // kept / (kept + removed). -1 = unknown, and the percent is omitted.
+    void setEcgKept(int nKept) { m_nEcgKept = nKept; update(); }
+    void setPpgKept(int nKept) { m_nPpgKept = nKept; update(); }
+
+    // The dashed pulse extremes (TemplateViewerWindow::ppgExtremeTraces),
+    // display-normalized on
+    // the PPG's own axis and frame (same columns as the trace). Drawn dashed
+    // under the template, and they widen the PPG y-range so neither is
+    // clipped. Cleared by setData / setPpgData: a new trace needs its own.
+    void setPpgOutliers(std::vector<std::vector<double>> beats) {
+        m_ppgOutliers = std::move(beats); update();
+    }
+
+    // The ECG twin: the kept beats with the largest and smallest P-to-T range
+    // (TemplateViewerWindow::ecgExtremeTraces), on the ECG trace's own frame
+    // and scale. Dashed under the trace; they widen the ECG y-range. Cleared
+    // by setData / setEcgData, since a new ECG trace needs its own.
+    void setEcgOutliers(std::vector<std::vector<double>> beats) {
+        m_ecgOutliers = std::move(beats); update();
+    }
+
     // Pin the ECG channel's contribution to the x-frame to a FIXED window, in
     // seconds relative to R, instead of deriving it from the current ECG
     // trace's finite extent. The four alignments (P/Q/R/J) produce averages
@@ -771,7 +794,11 @@ private:
     // ECG channel and the PPG. Displayed in the title when non-zero.
     int   m_nEcgBeats = 0;
     int   m_nPpgBeats = 0;
+    int   m_nEcgKept = -1;   // see setEcgKept
+    int   m_nPpgKept = -1;   // see setPpgKept
+    std::vector<std::vector<double>> m_ppgOutliers;   // see setPpgOutliers
+    std::vector<std::vector<double>> m_ecgOutliers;   // see setEcgOutliers
 
-    static constexpr int margin_left = 26, margin_right = 26, margin_top = 20, margin_bottom = 26;
+    static constexpr int margin_left = 26, margin_right = 26, margin_top = 23, margin_bottom = 26;
     static constexpr int click_radius_around_marker = 12;
 };

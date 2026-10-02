@@ -1194,7 +1194,7 @@ void TemplateViewerWindow::save_bin_and_csv() {
             writeTemplateMarkingsCsv(mf, m_bins,
                 m_subjectId.toStdString(), m_sampleRate,
                 m_ppgRateHz, m_abpRateHz, m_artRateHz, m_artPulmRateHz,
-                m_peakFitMode, m_onOffsetFitMode);
+                m_peakFitMode, m_onOffsetFitMode, m_beatTimes, m_recordSleep);
             if (!mf.good())
                 throw std::runtime_error("failed writing " + csvPath.toStdString());
             std::cout << "Wrote markings CSV: " << csvPath.toStdString() << "\n";

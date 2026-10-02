@@ -28,6 +28,7 @@
 #include <vector>
 #include <functional>
 #include "fiducial_marker_finding/feature_marks.hpp"
+#include "fiducial_marker_finding/ppg_dicrotic.hpp"
 
 
 namespace alignment {
@@ -933,7 +934,7 @@ namespace alignment {
         // `beats`: sample positions in the channel signal passed in, not
         // columns of the aligned frame. up50_abs is sub-sample (first_crossing,
         // before the rounding the alignment does); peak_abs is the detector's
-        // whole column. For the transit-time log (ptt_log.hpp), which needs
+        // whole column. For the transit-time log (ptt_logging.hpp), which needs
         // real times and not frame columns.
         std::vector<double> peak_abs;
         std::vector<double> up50_abs;
@@ -944,6 +945,15 @@ namespace alignment {
         std::vector<double> foot_abs;
         std::vector<double> maxup_abs;
         std::vector<double> notch_abs;
+        // The notch IN THE ALIGNED FRAME's columns, parallel to peak_cols and
+        // foot_cols: the same `prepend` shift the waveform got. NaN where the
+        // windowed pass measured no notch for that cycle. This is what a
+        // display reads -- nothing re-detects a notch from a template.
+        std::vector<double> notch_cols;
+        // E-5.7 windowed-pass counters for this channel, for the per-record
+        // Tier 2 firing-rate gate (E-5.6) and the dead-path review (E-5.9).
+        int dn_windows = 0, dn_windows_rejected = 0;
+        int dn_tier1 = 0, dn_tier2 = 0, dn_undetected = 0, dn_boundary_only = 0;
         int    median_length = -1;
         size_t total_beats = 0;
 
@@ -1020,22 +1030,27 @@ namespace alignment {
     //                  (first_crossing), sub-sample.
     //   max upslope    the steepest point between foot and peak
     //                  (steepest_slope_in), sub-sample.
-    //   dicrotic notch the deepest local minimum after the peak and before the
-    //                  pulse's end (the trough before the next upstroke),
-    //                  skipping the first tenth of that span so the peak's own
-    //                  shoulder is not taken. NaN WHEN THERE IS NONE: a damped
-    //                  pulse with no notch has no notch time, and a fallback
-    //                  position (which detect_ppg_dicrotic returns for the
-    //                  display bar) would be reported as a measurement.
+    //   diastolic end  the trough before the next upstroke, within one RR of
+    //                  the peak (trough_in). The cycle's end: it bounds the
+    //                  notch search, which E-5.5 requires be the cycle end and
+    //                  not a fraction of RR.
+    //
+    // THE DICROTIC NOTCH IS NOT HERE. It is measured by the E-5 WINDOWED pass
+    // (ppg_dicrotic::detectDicroticNotchWindowed) over the whole signal, once,
+    // after every beat's peak and end are known -- see the notch block at the
+    // end of extract_ppg_beats_and_align. A notch cannot be measured from one
+    // cycle in isolation: the method needs a 4-second multi-cycle window to
+    // constrain its envelopes, and the join contract needs two overlapping
+    // windows per cycle.
     //
     // peak / foot are -1 and the rest NaN when not found; the caller decides
     // what a missing landmark costs the beat.
     struct PulseLandmarks {
         int    peak = -1;
         int    foot = -1;
+        int    end = -1;      ///< diastolic endpoint; bounds the notch search
         double up50 = std::numeric_limits<double>::quiet_NaN();
         double maxUpslope = std::numeric_limits<double>::quiet_NaN();
-        double notch = std::numeric_limits<double>::quiet_NaN();
     };
 
     inline PulseLandmarks pulseLandmarks(const std::vector<double>& beat,
@@ -1063,21 +1078,13 @@ namespace alignment {
         const double m = FeatureMarks::steepest_slope_in(beat, L.foot, L.peak);
         if (m >= 0.0) L.maxUpslope = m;
 
-        // The pulse's end: the trough before the next upstroke, within one RR
-        // of the peak.
-        const int endHi = std::min(N - 1, L.peak + rr);
-        if (endHi - L.peak > 3) {
-            const int end = FeatureMarks::trough_in(beat, L.peak + 1, endHi);
-            if (end > L.peak + 4) {
-                const int margin = std::max(2, (end - L.peak) / 10);
-                int best = -1; double bestV = std::numeric_limits<double>::infinity();
-                for (int i = L.peak + margin + 1; i < end - 1; ++i) {
-                    const double a = beat[i - 1], b = beat[i], c = beat[i + 1];
-                    if (std::isnan(a) || std::isnan(b) || std::isnan(c)) continue;
-                    if (b <= a && b <= c && b < bestV) { bestV = b; best = i; }
-                }
-                if (best >= 0) L.notch = static_cast<double>(best);
-            }
+        // The diastolic endpoint: the trough before the next upstroke, within
+        // one RR of the peak. E-5.5 requires the notch search be bounded by
+        // the cycle's end and not by a fraction of RR, and this is that end.
+        {
+            const int endHi = std::min(N - 1, L.peak + rr);
+            if (endHi > L.peak + 3)
+                L.end = FeatureMarks::trough_in(beat, L.peak + 1, endHi);
         }
         return L;
     }
@@ -1102,7 +1109,7 @@ namespace alignment {
         // the whole struct, so it cannot desynchronise from the waveform.
         struct Raw {
             std::vector<double> data; int peak; int foot; int up50; int r;
-            int64_t start; double up50D; double rExact; double maxUp; double notch;
+            int64_t start; double up50D; double rExact; double maxUp; int endCol;
         };
         std::vector<Raw> raw;
         std::vector<int> rr_lens;
@@ -1202,7 +1209,7 @@ namespace alignment {
                 ? (*rPeaksExact)[i] - static_cast<double>(start)
                 : static_cast<double>(r_col);
             raw.push_back({ std::move(beat), peak, foot, up50, r_col, start, up50D, rExact,
-                L.maxUpslope, L.notch });
+                L.maxUpslope, L.end });
             rr_lens.push_back(static_cast<int>(rr));
             // Pushed HERE, in the same statement group as the beat itself, and
             // after every `continue` above. A beat and its ordinal have to be
@@ -1287,7 +1294,6 @@ namespace alignment {
             out.up50_abs.push_back(static_cast<double>(b.start) + b.up50D);
             out.foot_abs.push_back(static_cast<double>(b.start + b.foot));
             out.maxup_abs.push_back(static_cast<double>(b.start) + b.maxUp);   // NaN stays NaN
-            out.notch_abs.push_back(static_cast<double>(b.start) + b.notch);
             const int prepend = up50_anchor - b.up50;   // may be < 0 now
             std::vector<double> a(shared_w, NaND);
             for (int k = 0; k < (int)b.data.size(); ++k) {
@@ -1300,9 +1306,78 @@ namespace alignment {
             // The same shift the waveform got, applied to the R column: this
             // is the one number that ties the pulse frame back to the QRS.
             out.r_cols.push_back(prepend + b.r);
+            // Filled after the windowed pass below, which needs every cycle's
+            // peak and end before it can run; placeholder keeps the arrays
+            // parallel.
+            out.notch_cols.push_back(NaND);
         }
         out.up50_aligned_col = up50_anchor;
         out.r_aligned_col = r_anchor;
+
+        // ---- THE DICROTIC NOTCH: E-5 WINDOWED PASS, ONCE, ON THE SIGNAL ----
+        //
+        // Not per beat. E-5 runs on 4-second multi-cycle windows advanced by
+        // half a window, because the envelopes its iteration builds need many
+        // cycles to constrain them and its join contract needs two overlapping
+        // windows per cycle. Run here, after the loop above, because that loop
+        // is what establishes each cycle's systolic peak and diastolic
+        // endpoint -- which are the windowed pass's inputs.
+        //
+        // ON THE RAW SIGNAL, in signal coordinates, so every window is a real
+        // stretch of recording rather than a row of re-aligned slices. The
+        // results come back per cycle and are written straight into
+        // notch_abs, which is already in signal coordinates like peak_abs and
+        // the rest.
+        //
+        // BOUNDARY CYCLES AND REJECTED WINDOWS BOTH YIELD NaN, as does a
+        // genuine non-detection. The three are distinguishable in the pass's
+        // own counters but not in notch_abs, which is a position column: a
+        // position is either measured or it is not.
+        {
+            out.notch_abs.assign(raw.size(), NaND);
+            std::vector<int> sysPeaks, cycleEnds;
+            std::vector<int> cycOf;            // cycle -> raw index
+            sysPeaks.reserve(raw.size());
+            cycleEnds.reserve(raw.size());
+            cycOf.reserve(raw.size());
+            for (size_t ri = 0; ri < raw.size(); ++ri) {
+                const auto& b = raw[ri];
+                if (b.endCol <= b.peak) continue;          // no cycle end: no bound
+                const int64_t pk = b.start + b.peak;
+                const int64_t en = b.start + b.endCol;
+                if (pk < 0 || en >= static_cast<int64_t>(signal.size())) continue;
+                // Strictly increasing, which the pass requires. Overlapping
+                // slices can repeat a peak; the later one is dropped rather
+                // than reordering the series.
+                if (!sysPeaks.empty() && static_cast<int>(pk) <= sysPeaks.back()) continue;
+                sysPeaks.push_back(static_cast<int>(pk));
+                cycleEnds.push_back(static_cast<int>(en));
+                cycOf.push_back(static_cast<int>(ri));
+            }
+            if (!sysPeaks.empty()) {
+                const ppg_dicrotic::WindowedPass wp =
+                    ppg_dicrotic::detectDicroticNotchWindowed(signal, fs, sysPeaks, cycleEnds);
+                for (size_t c = 0; c < cycOf.size() && c < wp.perCycle.size(); ++c) {
+                    const ppg_dicrotic::DnResult& r = wp.perCycle[c];
+                    if (!r.found()) continue;
+                    const size_t ri = static_cast<size_t>(cycOf[c]);
+                    out.notch_abs[ri] = r.position();
+                    // Into the aligned frame, by the same shift the waveform
+                    // got: prepend = up50_anchor - this beat's own up50.
+                    if (ri < out.notch_cols.size() && ri < raw.size()) {
+                        const int prepend = up50_anchor - raw[ri].up50;
+                        out.notch_cols[ri] = r.position()
+                            - static_cast<double>(raw[ri].start) + prepend;
+                    }
+                }
+                out.dn_windows = wp.nWindows;
+                out.dn_windows_rejected = wp.nWindowsRejected;
+                out.dn_tier1 = wp.nTier1;
+                out.dn_tier2 = wp.nTier2;
+                out.dn_undetected = wp.nUndetected;
+                out.dn_boundary_only = wp.nBoundaryOnly;
+            }
+        }
 
 
         out.total_beats = out.beats.size();

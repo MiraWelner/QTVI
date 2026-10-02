@@ -28,6 +28,9 @@ struct PPGTemplatesResult {
     std::vector<std::vector<std::vector<double>>> kept; // [bin][beat][sample] retained snips
     std::vector<int> peakCol;                // [bin] systolic peak column (R1..R2)
     std::vector<int> footCol;                // [bin] foot column (R1..peak)
+    std::vector<double> notch_from_peak;     // [bin] median (notch - peak), samples
+    std::vector<int> notch_n;                // [bin] member beats that had one
+    std::vector<double> notchCol;            // [bin] peakCol + notch_from_peak, -1 = none
     // [bin] the template's MEASURED R column, -1 where unmeasurable. The
     // pulse has no R-relative time axis without it; see
     // alignment::PpgBeatSet::r_cols for why it is not a constant.
@@ -150,6 +153,24 @@ struct PulseTemplateBin {
     std::vector<ptt_log::Beat> ptt;           // every measured beat; see ptt_log
     int peakCol = -1;                         // systolic peak column
     int footCol = -1;                         // foot column
+    // THE DICROTIC NOTCH, in this template's own columns. NOT detected on the
+    // template: E-5 has no per-template procedure, and the one it does have
+    // runs on 4-second windows of the recording. This is the MEDIAN of the
+    // member beats' own notch columns (PpgBeatSet::notch_cols), which is the
+    // same reduction the waveform itself gets -- the template is a column
+    // median over these beats, so its notch is the median of theirs.
+    //
+    // -1 when no member beat had a notch. notch_n is how many did, i.e. this
+    // template's detectability, so a notch resting on few beats is visible as
+    // such rather than looking as firm as one resting on all of them.
+    // Median (notch - systolic peak) over the member beats, in samples.
+    // NaN when no member beat had a notch. An OFFSET, not a column: see the
+    // note where it is computed.
+    double notch_from_peak = std::numeric_limits<double>::quiet_NaN();
+    int    notch_n = 0;
+    // The same notch as a COLUMN of this template, = peakCol + notch_from_peak.
+    // -1 when there is no notch or it falls outside the template.
+    double notchCol = -1.0;
     // THE TEMPLATE'S R COLUMN, median of the surviving beats' own R columns
     // in the shared frame (alignment::PpgBeatSet::r_cols). -1 = not
     // measurable, which every consumer must read as "this pulse has no
@@ -330,7 +351,7 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
         // Every beat the slicer measured, survivors or not, so a bin whose
         // filter rejects everything still reports its transit times. R is the
         // ECG detection this beat was sliced from, on the ECG clock; the pulse
-        // landmarks are on the pulse clock. See ptt_log.hpp.
+        // landmarks are on the pulse clock. See ptt_logging.hpp.
         {
             const size_t nb = aligned.beats.size();
             const bool haveAbs = aligned.peak_abs.size() == nb
@@ -349,7 +370,8 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
                     ptt_log::Beat bt;
                     bt.slice = sl;
                     bt.kept = isKept[k] != 0;
-                    bt.r_peak_distance_from_binstart_in_s = static_cast<double>(masterPeaksEcg[sl]) / ecgRate;
+                    bt.r_peak_distance_from_binstart_in_s =
+                        static_cast<double>(masterPeaksEcg[sl]) / ecgRate;
                     bt.peak_s = aligned.peak_abs[k] / channelRate;
                     bt.t50_s = aligned.up50_abs[k] / channelRate;
                     bt.foot_s = aligned.foot_abs[k] / channelRate;
@@ -447,6 +469,44 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
             if (!rc.empty()) {
                 std::sort(rc.begin(), rc.end());
                 out.rCol = rc[rc.size() / 2];
+            }
+        }
+
+        // ---- THE NOTCH, AS AN OFFSET FROM THE SYSTOLIC PEAK --------------
+        //
+        // NOT detected on the template: E-5 has no per-template procedure, and
+        // the one it has runs on 4-second windows of the RECORDING. The
+        // windowed pass already measured a notch for each of these beats.
+        //
+        // STORED AS THE MEDIAN (notch - peak) OFFSET, NOT AS A COLUMN, and
+        // that distinction is the whole point. A column median would be in the
+        // beats' own frame, while out.peakCol below is detected on the
+        // TEMPLATE -- two different estimators of "the peak". Measured on MESA
+        // 3014843 they differ by about 50 samples, so a notch stored as a
+        // column landed 66 ms after the drawn peak when the beats themselves
+        // said 155 ms. The offset is a physiological interval and survives the
+        // change of reference; the column does not.
+        //
+        // The caller adds it to whichever peak it is drawing. notch_n is the
+        // contributor count, i.e. this template's detectability: a notch
+        // resting on 1 of 30 beats is as "found" as one on 30 of 30, and this
+        // is the only field that says which.
+        {
+            std::vector<double> offs;
+            offs.reserve(survivorRows.size());
+            const bool usable = aligned.notch_cols.size() == aligned.beats.size()
+                && aligned.peak_cols.size() == aligned.beats.size();
+            if (usable)
+                for (const size_t k : survivorRows)
+                    if (std::isfinite(aligned.notch_cols[k]) && aligned.peak_cols[k] >= 0)
+                        offs.push_back(aligned.notch_cols[k]
+                            - static_cast<double>(aligned.peak_cols[k]));
+            out.notch_n = static_cast<int>(offs.size());
+            if (!offs.empty()) {
+                std::sort(offs.begin(), offs.end());
+                const std::size_t m = offs.size() / 2;
+                out.notch_from_peak = (offs.size() % 2) ? offs[m]
+                    : 0.5 * (offs[m - 1] + offs[m]);
             }
         }
 
@@ -581,6 +641,17 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
         }
     }
 
+    // ---- THE NOTCH'S COLUMN, RELATIVE TO THE TEMPLATE'S OWN PEAK ---------
+    //
+    // Now that out.peakCol is known, the median offset becomes a column in the
+    // frame the template is drawn in. This is what keeps the notch bar the
+    // measured interval away from the peak the operator can see.
+    if (out.peakCol >= 0 && std::isfinite(out.notch_from_peak)) {
+        const double c = out.peakCol + out.notch_from_peak;
+        const int N2 = static_cast<int>(out.tmpl.size());
+        out.notchCol = (c >= 0.0 && c <= N2 - 1) ? c : -1.0;
+    }
+
     // Per-sample robust spread, in the SAME units the mean trace will
     // eventually be displayed/exported in (minus only the final /ref
     // division, which normalize_features::scale_array_by_ref applies at
@@ -643,6 +714,9 @@ inline PPGTemplatesResult CreatePulseTemplates(
     out.keptSlices.assign(n, {});
     out.ptt.assign(n, {});
     out.peakCol.assign(n, -1);
+    out.notch_from_peak.assign(n, std::numeric_limits<double>::quiet_NaN());
+    out.notchCol.assign(n, -1.0);
+    out.notch_n.assign(n, 0);
     out.footCol.assign(n, -1);
     out.rCol.assign(n, -1);
 
@@ -663,6 +737,9 @@ inline PPGTemplatesResult CreatePulseTemplates(
             out.keptSlices[i] = std::move(r.keptSlices);
             out.ptt[i] = std::move(r.ptt);
             out.peakCol[i] = r.peakCol;
+            out.notch_from_peak[i] = r.notch_from_peak;
+            out.notchCol[i] = r.notchCol;
+            out.notch_n[i] = r.notch_n;
             out.footCol[i] = r.footCol;
             out.rCol[i] = r.rCol;
         }

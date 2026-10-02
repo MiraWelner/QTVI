@@ -1,6 +1,8 @@
 // ppg_pipeline.cpp -- implementations for ppg_pipeline.hpp.
 
 #include "ppg_pipeline.hpp"
+#include "fiducial_marker_finding/ppg_derivative.hpp"   // the one Savitzky-Golay bank
+#include "fiducial_marker_finding/ppg_dicrotic.hpp"    // extremaOfFirstDerivative
 
 #include <algorithm>
 #include <cmath>
@@ -17,7 +19,7 @@ namespace {
     // sampled at every integer index in [0, N). Tails outside the knot span
     // are left NaN (callers that need full coverage anchor the endpoints).
     // -----------------------------------------------------------------
-    std::vector<double> naturalCubicSpline(const std::vector<int>& xs,
+    std::vector<double> naturalCubicSplineImpl(const std::vector<int>& xs,
         const std::vector<double>& ys, int N) {
         const int n = static_cast<int>(xs.size());
         std::vector<double> out(N, kNaN);
@@ -116,16 +118,12 @@ namespace {
     // -----------------------------------------------------------------
     // Interior local extrema, NaN-skipping (used by the IEM sift).
     // -----------------------------------------------------------------
-    void findExtrema(const std::vector<double>& s,
-        std::vector<int>& maxs, std::vector<int>& mins) {
-        maxs.clear(); mins.clear();
-        const int N = static_cast<int>(s.size());
-        for (int i = 1; i < N - 1; ++i) {
-            if (std::isnan(s[i - 1]) || std::isnan(s[i]) || std::isnan(s[i + 1])) continue;
-            if (s[i] >= s[i - 1] && s[i] > s[i + 1]) maxs.push_back(i);
-            else if (s[i] <= s[i - 1] && s[i] < s[i + 1]) mins.push_back(i);
-        }
-    }
+    // findExtrema REMOVED. It took 3-point extrema of the SIGNAL; E-5.3
+    // requires extrema of the FIRST DERIVATIVE, located by sign changes of the
+    // SECOND. Those are different and larger knot sets, and the knot set is
+    // what the envelopes -- and therefore the residual the notch lives in --
+    // are built from. ppg_dicrotic::extremaOfFirstDerivative is now the single
+    // definition; see the note there on why the sign of d2 must not be used.
 
     std::vector<double> envelopeThrough(const std::vector<double>& s,
         const std::vector<int>& ext, int i0, int i1) {
@@ -133,52 +131,91 @@ namespace {
         xs.push_back(i0); ys.push_back(s[i0]);
         for (int e : ext) if (e > i0 && e < i1) { xs.push_back(e); ys.push_back(s[e]); }
         if (xs.back() != i1) { xs.push_back(i1); ys.push_back(s[i1]); }
-        return naturalCubicSpline(xs, ys, static_cast<int>(s.size()));
+        return naturalCubicSplineImpl(xs, ys, static_cast<int>(s.size()));
     }
 
 } // anonymous namespace
 
 namespace ppg_pipeline {
 
-    IemEnvelope iemEnvelope(const std::vector<double>& pulse, int maxIter, double sdThresh) {
+    // E-5.2: Savitzky-Golay coefficient count nc, a WINDOW length, odd, about
+    // one half-width (0.1 s) of the shortest cardiac feature. 25 at 256 Hz,
+    // 49 at 500 Hz. The authors name non-adaptive SG parameters as their first
+    // limitation and require nc be updated for a different sampling rate.
+    static int sgNc(double fs) {
+        int n = (fs > 0.0) ? static_cast<int>(std::lround(0.098 * fs)) : 25;
+        if (n % 2 == 0) ++n;
+        return std::max(n, 7);
+    }
+
+    // E-5.3's `splineThrough`. One definition, shared by the IEM's envelopes
+    // and E-1's DC baseline.
+    std::vector<double> naturalCubicSpline(const std::vector<int>& xs,
+        const std::vector<double>& ys, int N) {
+        return naturalCubicSplineImpl(xs, ys, N);
+    }
+
+    IemEnvelope iemEnvelope(const std::vector<double>& pulse, double fs,
+        int maxIter, double beta) {
         const int N = static_cast<int>(pulse.size());
         IemEnvelope R;
-        R.envelope.assign(N, kNaN);
-        R.imf.assign(N, kNaN);
-        if (N < 5) return R;
+        R.nonStationary.assign(N, kNaN);
+        R.stationary.assign(N, 0.0);
+        if (N < 5 || !(fs > 0.0)) return R;
 
         int i0 = 0;     while (i0 < N && std::isnan(pulse[i0])) ++i0;
         int i1 = N - 1; while (i1 >= 0 && std::isnan(pulse[i1])) --i1;
         if (i1 - i0 < 4) return R;
 
-        std::vector<double> h = pulse;
-        std::vector<int> mx, mn;
+        std::vector<double> y = pulse;          // current UNSMOOTHED iterate
+        double prevEnergy = 0.0;                // R_0 initialised to zero
 
         for (int it = 0; it < maxIter; ++it) {
-            findExtrema(h, mx, mn);
-            if (mx.empty() || mn.empty()) break;   // no oscillation left -> h is the trend
+            // Envelopes are built on the SMOOTHED signal, and the knots are
+            // extrema of its FIRST derivative located by sign changes of the
+            // SECOND (E-5.3). ppg_deriv supplies the Savitzky-Golay bank --
+            // d0 is the smoothed signal, d1/d2 the derivatives.
+            // nc per E-5.2: 25 at 256 Hz, 49 at 500 Hz. ppg_deriv takes a
+            // HALF-width and its own default (12) would give nc = 25 at
+            // 500 Hz -- half what E-5.2 requires.
+            const int h = (sgNc(fs) - 1) / 2;
+            const ppg_deriv::DerivBank D = ppg_deriv::buildDerivatives(y, fs, h, h, 4);
+            if (D.d1.empty() || D.d2.empty()) { R.converged = true; break; }
 
-            const std::vector<double> up = envelopeThrough(h, mx, i0, i1);
-            const std::vector<double> lo = envelopeThrough(h, mn, i0, i1);
+            std::vector<int> mx, mn;
+            ppg_dicrotic::extremaOfFirstDerivative(D.d1, D.d2, mx, mn);
+            if ((int)mx.size() < 2 || (int)mn.size() < 2) { R.converged = true; break; }
 
-            std::vector<double> hn(N, kNaN);
-            double num = 0.0, den = 0.0;
+            // Knot VALUES are the smoothed signal at the knot positions.
+            const std::vector<double> up = envelopeThrough(D.d0, mx, i0, i1);
+            const std::vector<double> lo = envelopeThrough(D.d0, mn, i0, i1);
+
+            // ...but subtraction is from the UNSMOOTHED current iterate.
+            // Equation (3).
+            std::vector<double> r(N, kNaN);
+            double energy = 0.0;
+            int n = 0;
             for (int i = i0; i <= i1; ++i) {
-                if (std::isnan(up[i]) || std::isnan(lo[i]) || std::isnan(h[i])) continue;
+                if (std::isnan(up[i]) || std::isnan(lo[i]) || std::isnan(y[i])) continue;
                 const double m = 0.5 * (up[i] + lo[i]);
-                hn[i] = h[i] - m;
-                num += (h[i] - hn[i]) * (h[i] - hn[i]);
-                den += h[i] * h[i];
+                r[i] = y[i] - m;
+                R.stationary[i] += m;
+                energy += r[i] * r[i];
+                ++n;
             }
+            if (n == 0) { R.converged = true; break; }
+            energy /= n;                        // E{R_i^2(n)}
+
             R.upper = up; R.lower = lo;
-            h.swap(hn);
+            y.swap(r);                          // iterate on the residual
             R.iterations = it + 1;
-            if (den > 0.0 && num / den < sdThresh) break;
+
+            // STC_i = |E{R_{i-1}^2} - E{R_i^2}| < beta
+            if (std::fabs(prevEnergy - energy) < beta) { R.converged = true; break; }
+            prevEnergy = energy;
         }
 
-        R.imf = h;
-        for (int i = 0; i < N; ++i)
-            R.envelope[i] = (!std::isnan(pulse[i]) && !std::isnan(h[i])) ? pulse[i] - h[i] : kNaN;
+        R.nonStationary = y;
         R.ok = true;
         return R;
     }
@@ -205,7 +242,7 @@ namespace ppg_pipeline {
         if (xs.front() != 0) { xs.insert(xs.begin(), 0);   ys.insert(ys.begin(), ys.front()); }
         if (xs.back() != N - 1) { xs.push_back(N - 1);        ys.push_back(ys.back()); }
 
-        std::vector<double> spline = naturalCubicSpline(xs, ys, N);
+        std::vector<double> spline = naturalCubicSplineImpl(xs, ys, N);
 
         // 2nd-order Butterworth LPF at 0.1 Hz, zero-phase.
         const double fc = 0.1;

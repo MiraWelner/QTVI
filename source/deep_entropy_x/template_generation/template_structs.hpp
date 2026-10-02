@@ -55,6 +55,14 @@ namespace template_structs {
         uint64_t              ppg_n_beats = 0;
         int                   ppg_peak_col = -1;   // construction-time fiducials
         int                   ppg_onset_col = -1;
+        // THE DICROTIC NOTCH, in this bin's pulse-template columns, and the
+        // number of member beats that had one. Measured by the E-5 windowed
+        // pass over the continuous signal and reduced to this template as the
+        // median of its member beats' notch columns -- NOT detected on the
+        // template, which E-5 has no procedure for. -1 = no member beat had a
+        // notch.
+        double                ppg_notch_col = -1.0;
+        int                   ppg_notch_n = 0;
         int                   ppg_r_col = -1;
         int                   abp_r_col = -1;
         int                   art_r_col = -1;
