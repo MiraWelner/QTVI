@@ -1,6 +1,6 @@
 #pragma once
 /**
- * @file   split_bins_to_templates.hpp
+ * @file   joint_bank.hpp
  * @brief  Section 4.6 morphology segregation as ONE partition shared by all
  *         four channels (CH1, CH2, CH3, PPG), rather than four independent
  *         banks.
@@ -20,6 +20,31 @@
 #include "template_generation/seed_pool.hpp"
 #include "template_generation/beat_substitute.hpp"
 
+ // ---------------------------------------------------------------------------
+ // ONE CHANNEL'S VIEW OF ONE BIN'S PARTITION
+ // ---------------------------------------------------------------------------
+ //
+ // What projectToChannel fills and the morphology writers read: the bank as
+ // that channel sees it, plus the per-slice verdicts decided once for all four
+ // channels. The four copies per bin are VIEWS of a single partition, not four
+ // partitions -- which is the whole point of this file.
+ //
+ // IN namespace tbank, NOT jbank, because every member is a tbank type or a
+ // type that depends on one, and because the readers (morphology_csv, the
+ // serializer) speak tbank. It cannot live in template_bank.hpp: seed_pool.hpp
+ // and pvc_filter.hpp both include that header for tbank::Category and
+ // tbank::PvcFilter, so aggregating them there is a cycle. It has to sit
+ // downstream of all three, and this file already is.
+ //
+ // It used to live in bin_pipeline.hpp beside a per-channel driver
+ // (runChannel) that one joint partition replaced. After that driver went, the
+ // file held this struct and six static_asserts pinning
+ // alignment::TukeyOutcome to tbank::TukeyOutcome -- and nothing converts one
+ // to the other any more: alignment's per-beat tukey_outcome has no reader
+ // outside alignment.hpp, and the only writer of BeatFlags::tukey is
+ // tukeyOutcomeFor below, which maps ExcludeReason through an explicit switch.
+ // So the file is gone. If a value-level conversion is ever reintroduced, the
+ // assert belongs next to that cast.
 namespace tbank {
 
     struct ChannelOutput {
@@ -1165,7 +1190,12 @@ namespace jbank {
         // filter, so the RR fence below uses the same series -- an interval
         // verdict and a prematurity verdict cannot disagree about a beat.
         // Null or empty skips the RR pass entirely.
-        const std::vector<double>* rr_after_ms = nullptr)
+        const std::vector<double>* rr_after_ms = nullptr,
+        // k in every fence below, [Q1 - k*IQR, Q3 + k*IQR]. The caller passes
+        // the partition's own value: tbank::tukeyFenceEcg() for the ECG bank,
+        // tbank::tukeyFencePpg() for the pulse bank (config ecg_tukey_fence /
+        // ppg_tukey_fence).
+        double tukeyK = 1.5)
     {
         const uint32_t n_slices = static_cast<uint32_t>(flags.size());
         excluded_reason.assign(n_slices,
@@ -1299,7 +1329,7 @@ namespace jbank {
 
                     TukeyFences fRR;
                     const std::vector<bool> keepRR =
-                        keep_within_tukey(rr, 1.5, &fRR);
+                        keep_within_tukey(rr, tukeyK, &fRR);
                     for (size_t k = 0; k < clean.size(); ++k) {
                         // Unmeasurable abstains, as everywhere else here.
                         if (std::isnan(rr[k])) continue;
@@ -1324,11 +1354,11 @@ namespace jbank {
                     // No fences out-param here: only the masks are used. The
                     // RR pass above does read fence_hi, for its long-side rule.
                     const std::vector<bool> keepA =
-                        keep_within_tukey(mm.amp, 1.5);
+                        keep_within_tukey(mm.amp, tukeyK);
                     const std::vector<bool> keepR =
-                        keep_within_tukey(mm.rloc, 1.5);
+                        keep_within_tukey(mm.rloc, tukeyK);
                     const std::vector<bool> keepW =
-                        keep_within_tukey(mm.wave, 1.5);
+                        keep_within_tukey(mm.wave, tukeyK);
 
                     for (size_t k = 0; k < clean.size(); ++k) {
                         // A metric that could not be measured does NOT reject.
@@ -1884,7 +1914,7 @@ namespace jbank {
         // BeatRecord::tukey, the trailer's n_blended_members), so it writes
         // them.
         cleanGroups(out.bank, ecgChans, out.flags, out.excluded_reason,
-            &out.clean, &in.rr_after_ms);
+            &out.clean, &in.rr_after_ms, tbank::tukeyFenceEcg());
         substitute_premature(out.bank, ecgChans, out.excluded_reason, out.flags,
             out.substitutions, &out.subs);
 
@@ -1897,7 +1927,8 @@ namespace jbank {
         {
             std::vector<tbank::BeatFlags> flagsPpg = out.flags;
             cleanGroups(out.bank_ppg, ppgChans, flagsPpg,
-                out.ppg_excluded_reason, &out.ppg_clean, &in.rr_after_ms);
+                out.ppg_excluded_reason, &out.ppg_clean, &in.rr_after_ms,
+                tbank::tukeyFencePpg());
             substitute_premature(out.bank_ppg, ppgChans,
                 out.ppg_excluded_reason, flagsPpg, out.ppg_substitutions,
                 nullptr);

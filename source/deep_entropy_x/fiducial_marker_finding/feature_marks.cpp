@@ -425,31 +425,11 @@ double FeatureMarks::find_t_end(const std::vector<double>& v, double fs, int r_c
 
     // ---- THE WINDOW: [J + 100 ms, the earlier of J + 700 ms and P's room] ----
     //
-    // IT WAS [J + 100 ms, J + 350 ms], which CLIPPED LONG QT. With J about
-    // 100 ms after Q onset, a 350 ms ceiling puts T end no later than ~QT
-    // 450 ms, and a longer QT had its T end forced into the window: the right
-    // edge -- which is also B, the baseline the fit levels to -- then sat on
-    // the T wave itself, and the detection landed somewhere up its downslope.
-    // A prolonged QT, which is the case worth measuring, read as normal.
-    //
-    // THE CEILING IS NOW J + 700 ms (QT to roughly 800 ms) OR THE NEXT BEAT,
-    // WHICHEVER COMES FIRST. T must end before the next P wave starts, and a
-    // fixed 700 ms would run into it at fast rates (next R 600 ms after this
-    // one). The template carries the next R -- it runs to R + 1.4 RR -- so it
-    // is found here (see nextRColumn) and the ceiling kept 250 ms short of it:
-    // P onset sits PR + Q-to-R before the next R, 160 to 240 ms, and the
-    // ceiling is also B, so it must not reach the P wave's upslope. Where no next R is found the fixed ceiling
-    // stands, trimmed to the template's last real sample so B is never NaN
-    // padding.
+    // IT WAS [J + 100 ms, J + 350 ms], which CLIPPED LONG QT. Now the rightmost end is 700ms
     const int lastFin = sample_extent::lastFinite(v);
     if (lastFin < 0) return -1.0;
     const int lo0 = cl(static_cast<int>(std::lround(j_point + 0.100 * fs)));
     int hi = cl(static_cast<int>(std::lround(j_point + 0.700 * fs)));
-    {
-        const int nr = nextRColumn(v, fs, r_col);
-        if (nr > r_col)
-            hi = cl(r_col + static_cast<int>(std::lround(0.67 * (nr - r_col))));
-    }
     hi = std::min(hi, lastFin);
 
     // B = post-T baseline at the right edge. E = the extremum in the window, by

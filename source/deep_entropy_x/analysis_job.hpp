@@ -95,6 +95,17 @@ namespace analysis_job {
         // <stem>_ecg_alignment_shifts.csv carried; both now go into the
         // peak-locations CSV instead, written from commit.
         std::array<std::vector<ecg_move_log::VerticalBin>, 3> ecgVertical;
+        // The operator's noise marks, for the per-beat noise columns of the
+        // peak-locations CSV (PEAK NOISE / MINOR NOISE / CLEAN per channel).
+        // Kept as rows, not spans, for their seconds: a span is matched in
+        // recording time, which is rate-free across ECG and PPG.
+        //   noiseState: 0 = no noise file (nothing was marked -> CLEAN),
+        //               1 = read, 2 = present but unreadable (-> blank).
+        std::vector<noise_markings::Row> noiseRows;
+        int noiseState = 0;
+        // The ECG rate bins were cut at (the original .bin's ECG1 upsample
+        // rate), to turn a spliced R position into recording seconds.
+        double ecgRecRateHz = 0.0;
     };
 
 
@@ -276,6 +287,17 @@ namespace analysis_job {
             << tbank::morphThresholdEcg() << ", ppg="
             << tbank::morphThresholdPpg() << "\n";
 
+        // Tukey fence multipliers: blank is 1.5 (config_loader); a value that
+        // is not a positive number is refused and the current one kept.
+        if (!tbank::setTukeyFenceEcg(cfg.ecg_tukey_fence))
+            std::cerr << "  [tukey] ecg_tukey_fence=" << cfg.ecg_tukey_fence
+            << " not usable (need > 0); keeping " << tbank::tukeyFenceEcg() << "\n";
+        if (!tbank::setTukeyFencePpg(cfg.ppg_tukey_fence))
+            std::cerr << "  [tukey] ppg_tukey_fence=" << cfg.ppg_tukey_fence
+            << " not usable (need > 0); keeping " << tbank::tukeyFencePpg() << "\n";
+        std::cerr << "  [tukey] fences Q1/Q3 -+ k*IQR, k: ecg="
+            << tbank::tukeyFenceEcg() << ", ppg=" << tbank::tukeyFencePpg() << "\n";
+
         // Pulse QC threshold: unset keeps the default, unusable is refused
         // rather than clamped. THE ONLY CALLER of setCorrFloor -- there used
         // to be an unconditional call above as well, which applied the value
@@ -334,6 +356,7 @@ namespace analysis_job {
                 for (size_t i = 0; i < job.info.size(); ++i)
                     sliceOfRow[i] = job.info[i].ecg_slice_of_row;
                 const bool useHdr = hdr.ok && hdr.ecgRateHz() > 0.0;
+                job.ecgRecRateHz = useHdr ? hdr.ecgRateHz() : job.rates.ecg;
                 job.beatTimes = useHdr
                     ? beat_times::build(job.peakResults, sliceOfRow, hdr.ecgRateHz(), hdr.ecgLength())
                     : beat_times::build(job.peakResults, sliceOfRow, job.rates.ecg);
@@ -349,6 +372,17 @@ namespace analysis_job {
             catch (const std::exception& e) {
                 std::cerr << "  [sleep] failed (" << e.what() << ")\n";
                 job.sleep = record_sleep::RecordSleep{};
+            }
+            // NOISE MARKS for the per-beat columns. No file = nothing was
+            // marked, so every beat is CLEAN; an unreadable file blanks them.
+            if (std::filesystem::exists(noise_bin_path)) {
+                noise_markings::RowsResult nr = noise_markings::loadRows(noise_bin_path.string());
+                if (nr.read) { job.noiseRows = std::move(nr.rows); job.noiseState = 1; }
+                else {
+                    job.noiseState = 2;
+                    std::cerr << "  [noise columns] " << noise_bin_path.string() << ": "
+                        << nr.error << "; the per-beat noise columns will be blank\n";
+                }
             }
             std::cerr << "  [sleep] " << (job.sleep.present()
                 ? "staging found, epoch " + std::to_string(job.sleep.epoch_sec) + " s"
@@ -457,6 +491,10 @@ namespace analysis_job {
     // ECG, per lead L (ch1..ch3), for every beat that lead sliced:
     //   chL_kept              KEPT when the beat is in its template's average,
     //                         otherwise WHY it is not (see verdictOf below)
+    //   chL_noise             PEAK NOISE / MINOR NOISE / CLEAN: whether the
+    //                         operator marked R Peak Noise or Minor Noise on
+    //                         THIS lead over the beat (see noiseOfBeat) --
+    //                         whether or not the anneal excised it
     //   chL_template          name of the lead's template whose members hold
     //                         the beat, as the viewer titles it (PQRST_A,
     //                         PVC_B, ...); blank for a NOT KEPT beat
@@ -466,6 +504,7 @@ namespace analysis_job {
     //                         POSITIVE = LATER
     //
     // PULSE, for every beat whose pulse the slicer could measure:
+    //   ppg_noise             the same noise reading for the PPG channel
     //   ppg_kept              the same verdict for the pulse, from the pulse
     //                         partition's own fences; PULSE_QC when the pulse
     //                         failed the correlation floor before any template
@@ -600,11 +639,12 @@ namespace analysis_job {
         static const char* kLead[3] = { "ch1", "ch2", "ch3" };
         std::vector<AnchorType> anchors(std::begin(anchor_view::anchor_array),
             std::end(anchor_view::anchor_array));
-        struct LeadCols { std::size_t kept, tmpl, tp, pq; std::vector<std::size_t> align; };
+        struct LeadCols { std::size_t kept, noise, tmpl, tp, pq; std::vector<std::size_t> align; };
         LeadCols lc[3];
         for (int c = 0; c < 3; ++c) {
             const std::string L = kLead[c];
             lc[c].kept = addText(L + "_kept");
+            lc[c].noise = addText(L + "_noise");
             lc[c].tmpl = addText(L + "_template");
             lc[c].tp = addNum(L + "_tp_mv_shift");
             lc[c].pq = addNum(L + "_pq_mv_shift");
@@ -612,6 +652,7 @@ namespace analysis_job {
                 lc[c].align.push_back(addNum(L + "_" + anchor_view::label(a) + "_align_ms_shift"));
         }
         const std::size_t pKept = addText("ppg_kept");
+        const std::size_t pNoise = addText("ppg_noise");
         const std::size_t pPttPeak = addNum("ptt_peak_ms");
         const std::size_t pPttT50 = addNum("ptt_t50_ms");
         const std::size_t pTmpl = addText("ppg_template");
@@ -706,7 +747,7 @@ namespace analysis_job {
                 const Row r = rowFor(b, bt.slice);
                 if (!r.v) continue;
                 const double rS = bt.r_peak_distance_from_binstart_in_s;
-                std::string verdict = "PEARSON";
+                std::string verdict = "PULSE_QC";
                 if (bt.kept)
                     verdict = (bt.slice < rowOfSlice.size() && rowOfSlice[bt.slice] >= 0)
                     ? verdictOf(rowState, static_cast<uint32_t>(rowOfSlice[bt.slice]), reason, bt.slice, group)
@@ -714,6 +755,97 @@ namespace analysis_job {
                 (*r.t)[bc.textSlot[pKept]] = verdict;
                 (*r.v)[pPttPeak] = (std::isfinite(bt.peak_s) && std::isfinite(rS)) ? (bt.peak_s - rS) * 1000.0 : kNaN;
                 (*r.v)[pPttT50] = (std::isfinite(bt.t50_s) && std::isfinite(rS)) ? (bt.t50_s - rS) * 1000.0 : kNaN;
+            }
+        }
+
+        // ---- NOISE MARKS, PER BEAT AND CHANNEL ----
+        //
+        // A beat is MARKED on a channel when its cycle -- its R peak to the
+        // next R -- overlaps a span the operator marked on that channel. R
+        // Peak Noise reads PEAK NOISE, Minor Noise MINOR NOISE; PEAK NOISE wins
+        // when both overlap; nothing else counts as noise. The R positions are
+        // mapped to recording seconds through the bin's splice (as beat_times
+        // does), and the spans' own seconds are used, so ECG and PPG spans
+        // are matched on one clock regardless of their sample rates. The
+        // bin's last R has no next R; its cycle is the R peak alone.
+        //
+        // A CYCLE NEVER CROSSES A CUT. A bin is spliced from separate
+        // stretches of the recording; the last R before an excised gap has
+        // its next R on the far side of it, and a window running to that R
+        // would cover the excised time -- and the very marks that excised it
+        // -- flagging a beat whose own data is clean. So a cycle ends where
+        // its stretch of the recording ends.
+        //
+        // Written for every beat with an R, whether or not the anneal excised
+        // anything: a span marked on one channel only is never excised (the
+        // anneal cuts only where every marked channel agrees), and these
+        // columns are how it still shows. A lead the recording does not have
+        // -- no beats sliced on it -- stays blank, never CLEAN; so does every
+        // column when the noise file exists but could not be read.
+        if (job.noiseState != 2 && job.ecgRecRateHz > 0.0) {
+            constexpr uint8_t kPeakNoise = 1, kMinorNoise = 2;   // annotation_types noise codes
+            struct Mark { double lo, hi; uint8_t code; };
+            std::array<std::vector<Mark>, 4> marks;   // [0..2] ECG1..3, [3] PPG
+            for (const noise_markings::Row& rw : job.noiseRows) {
+                if (rw.annotation_code != kPeakNoise && rw.annotation_code != kMinorNoise) continue;
+                int slot = -1;
+                if (rw.channel_code == noise_markings::code_for_channel("ECG1")) slot = 0;
+                else if (rw.channel_code == noise_markings::code_for_channel("ECG2")) slot = 1;
+                else if (rw.channel_code == noise_markings::code_for_channel("ECG3")) slot = 2;
+                else if (rw.channel_code == noise_markings::code_for_channel("PPG")) slot = 3;
+                if (slot < 0) continue;
+                marks[slot].push_back({ std::min(rw.start_sec, rw.end_sec),
+                    std::max(rw.start_sec, rw.end_sec), rw.annotation_code });
+            }
+            auto noiseOfBeat = [&](int slot, double t0, double t1) -> std::string {
+                bool peak = false, minor = false;
+                for (const Mark& m : marks[slot]) {
+                    if (m.hi < t0 || m.lo > t1) continue;
+                    if (m.code == kPeakNoise) peak = true; else minor = true;
+                }
+                return peak ? "PEAK NOISE" : (minor ? "MINOR NOISE" : "CLEAN");
+                };
+            bool leadPresent[3] = { false, false, false };
+            for (int c = 0; c < 3; ++c)
+                for (const ecg_move_log::VerticalBin& vb : job.ecgVertical[c])
+                    if (!vb.slice.empty()) { leadPresent[c] = true; break; }
+            bool ppgPresent = false;
+            for (const auto& bb : job.ppgTransit) if (!bb.empty()) { ppgPresent = true; break; }
+
+            for (std::size_t b = 0; b < nBins; ++b) {
+                const output_binfile_data& pr = job.peakResults[b];
+                const beat_times::Splice sp(pr.ecg_bin_indexs,
+                    std::numeric_limits<uint64_t>::max());
+                const std::vector<std::size_t>& rp = pr.ch1.raw;
+                // Recording seconds of R k, and the run (stretch) it lies in.
+                auto recSec = [&](std::size_t k, double& t, std::size_t& run) {
+                    if (k >= rp.size()) return false;
+                    const uint64_t p = static_cast<uint64_t>(rp[k]);
+                    for (std::size_t ri = 0; ri < sp.runs.size(); ++ri) {
+                        const beat_times::Splice::Run& R = sp.runs[ri];
+                        if (p >= R.concat0 && p < R.concat0 + R.len) {
+                            t = static_cast<double>(R.orig0 + (p - R.concat0)) / job.ecgRecRateHz;
+                            run = ri;
+                            return true;
+                        }
+                    }
+                    return false;
+                    };
+                for (std::size_t s = 0; s < rp.size(); ++s) {
+                    double t0 = 0.0, t1 = 0.0;
+                    std::size_t run0 = 0, run1 = 0;
+                    if (!recSec(s, t0, run0)) continue;
+                    if (!recSec(s + 1, t1, run1)) t1 = t0;
+                    else if (run1 != run0) {   // next R is past a cut: stop at this stretch's end
+                        const beat_times::Splice::Run& R = sp.runs[run0];
+                        t1 = static_cast<double>(R.orig0 + R.len - 1) / job.ecgRecRateHz;
+                    }
+                    const Row r = rowFor(b, s);
+                    if (!r.v) continue;
+                    for (int c = 0; c < 3; ++c)
+                        if (leadPresent[c]) (*r.t)[bc.textSlot[lc[c].noise]] = noiseOfBeat(c, t0, t1);
+                    if (ppgPresent) (*r.t)[bc.textSlot[pNoise]] = noiseOfBeat(3, t0, t1);
+                }
             }
         }
 

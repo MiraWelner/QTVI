@@ -102,6 +102,24 @@ namespace tbank {
         return true;
     }
 
+    // ---- TUKEY FENCE MULTIPLIERS (config ecg_tukey_fence / ppg_tukey_fence) --
+    // k in each template group's [Q1 - k*IQR, Q3 + k*IQR] fences, one for the
+    // ECG partition and one for the pulse partition; cleanGroups reads them.
+    // A value that is not a positive number is refused and changes nothing.
+    namespace tukey_fence { inline double g_ecg = 1.5; inline double g_ppg = 1.5; }
+    inline bool setTukeyFenceEcg(double k) {
+        if (!(k > 0.0) || !std::isfinite(k)) return false;
+        tukey_fence::g_ecg = k;
+        return true;
+    }
+    inline bool setTukeyFencePpg(double k) {
+        if (!(k > 0.0) || !std::isfinite(k)) return false;
+        tukey_fence::g_ppg = k;
+        return true;
+    }
+    inline double tukeyFenceEcg() { return tukey_fence::g_ecg; }
+    inline double tukeyFencePpg() { return tukey_fence::g_ppg; }
+
     inline constexpr int max_templates_per_bin = 6;//num templates in bank before merging
     inline constexpr int kMinOverlapColumns = 8;
     inline constexpr int kMaxJunkMembers = 3;

@@ -126,7 +126,6 @@ namespace config_loader_detail {
         cfg.snapshot_path = create_subfolder("snapshot_path");
         cfg.vcg_output = create_subfolder("vcg_output");
     }
-
     inline bool prompt_for_missing_folders(config_entry& cfg) {
         // If the input or output folder is not in the config.csv (i.e. its field is empty), prompt the user to select it.
         const std::vector<std::pair<const char*, std::string*>> fields = {
@@ -148,6 +147,10 @@ namespace config_loader_detail {
     }
 }
 
+// Creates the output subfolders under cfg.output_path and fills in their paths.
+// Call it once the input / output folders are final.
+using config_loader_detail::create_output_folders;
+
 inline bool load_config(int dataType, config_entry& out) {
     constexpr const char* CONFIG_PATH = "config.csv";
     using namespace config_loader_detail;
@@ -165,29 +168,64 @@ inline bool load_config(int dataType, config_entry& out) {
         return false;
     }
 
-    // Read the header row so column names can be mapped to indices.
+    // ---- THE LAYOUT: ONE ROW PER SETTING, ONE COLUMN PER DATASET ------------
+    //
+    //       parameter,mesa,bittium,chaos,shhs
+    //       ecg_raw_rate,256,500,500,125
+    //       ...
+    //
+    // The header's first cell is "parameter"; each later header cell names a
+    // dataset. The chosen dataset's column becomes one map, setting name ->
+    // value, which get_value_from_config reads. Setting and dataset names are
+    // matched case-insensitively, surrounding spaces ignored. A row whose
+    // first cell starts with '#' is a comment; a blank row is skipped.
     std::string header;
     if (!std::getline(file, header)) {
         std::cerr << "ERROR: " << CONFIG_PATH << " is empty\n";
         return false;
     }
     std::vector<std::string> headerFields = parse_config_row(header);
-    std::unordered_map<std::string, int> col;
-    for (int i = 0; i < (int)headerFields.size(); ++i) {
-        col[normalize_key(headerFields[i])] = i;
+    // Excel's "CSV UTF-8" save puts a byte-order mark in front of the first
+    // cell, which would make "parameter" not match.
+    if (!headerFields.empty() && headerFields[0].rfind("\xEF\xBB\xBF", 0) == 0)
+        headerFields[0].erase(0, 3);
+    const std::string firstCell = headerFields.empty() ? std::string() : normalize_key(headerFields[0]);
+    auto upper = [](std::string v) {
+        std::transform(v.begin(), v.end(), v.begin(), ::toupper);
+        return v;
+        };
+
+    if (firstCell != "parameter") {
+        std::cerr << "ERROR: " << CONFIG_PATH << " must start with a 'parameter' column "
+            "(one row per setting, one column per dataset); its first cell is '"
+            << (headerFields.empty() ? std::string() : headerFields[0]) << "'\n";
+        return false;
     }
+    int dcol = -1;
+    for (int i = 1; i < (int)headerFields.size(); ++i)
+        if (upper(headerFields[i]) == user_selected_dataset) { dcol = i; break; }
+    if (dcol < 0) {
+        std::cerr << "ERROR: no " << user_selected_dataset << " column in " << CONFIG_PATH << "\n";
+        return false;
+    }
+
+    std::unordered_map<std::string, std::string> values;
     std::string line;
     while (std::getline(file, line)) {
-        std::vector<std::string> row = parse_config_row(line);
-        auto get_value_from_config = [&](const std::string& name) -> std::string {
-            auto it = col.find(normalize_key(name));
-            if (it == col.end() || it->second >= (int)row.size()) return {};
-            return row[it->second];
-            };
-        std::string rowName = get_value_from_config("data_type");
-        std::transform(rowName.begin(), rowName.end(), rowName.begin(), ::toupper);
-        if (rowName != user_selected_dataset) continue;
+        const std::vector<std::string> row = parse_config_row(line);
+        if (row.empty() || row[0].empty() || row[0][0] == '#') continue;
+        const std::string key = normalize_key(row[0]);
+        if (values.count(key))
+            std::cerr << "WARNING: " << CONFIG_PATH << " lists '" << row[0]
+            << "' more than once; the last one is used\n";
+        values[key] = (dcol < (int)row.size()) ? row[dcol] : std::string();
+    }
+    auto get_value_from_config = [&](const std::string& name) -> std::string {
+        const auto it = values.find(normalize_key(name));
+        return it == values.end() ? std::string() : it->second;
+        };
 
+    {
 
         out.dataset_type = user_selected_dataset;
         out.main_file_extension = get_value_from_config("main_file_extension");
@@ -256,6 +294,8 @@ inline bool load_config(int dataType, config_entry& out) {
         out.morph_threshold_ecg = stod_or_default(get_value_from_config("morph_threshold_ecg"), 0.0);
         out.morph_threshold_ppg = stod_or_default(get_value_from_config("morph_threshold_ppg"), 0.0);
         out.pulse_qc_corr_floor = stod_or_default(get_value_from_config("pulse_qc_corr_floor"), 0.0);
+        out.ecg_tukey_fence = stod_or_default(get_value_from_config("ecg_tukey_fence"), 1.5);
+        out.ppg_tukey_fence = stod_or_default(get_value_from_config("ppg_tukey_fence"), 1.5);
         out.min_beats_template_ecg = stod_or_default(get_value_from_config("min_beats_template_ecg"), 0);
         out.min_beats_template_ppg = stod_or_default(get_value_from_config("min_beats_template_ppg"), 0);
         out.region_around_Rpeak_for_morphology_split = stod_or_default(get_value_from_config("region_around_Rpeak_for_morphology_split"), 0.0);
@@ -288,7 +328,4 @@ inline bool load_config(int dataType, config_entry& out) {
         if (ok) create_output_folders(out);
         return ok;
     }
-    std::cerr << "ERROR: no row with data_type=" << user_selected_dataset
-        << " in " << CONFIG_PATH << "\n";
-    return false;
 }

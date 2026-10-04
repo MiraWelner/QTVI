@@ -104,6 +104,14 @@ struct config_entry {
     // this one whether a pulse enters its bin's template at all, that one
     // which morphology group a beat joins.
     double pulse_qc_corr_floor = 0.0;
+    // TUKEY FENCE MULTIPLIERS: k in a template group's outlier fences,
+    // [Q1 - k*IQR, Q3 + k*IQR], for RR length, amplitude, R location and wave
+    // score (cleanGroups, split_bins_to_templates.hpp). One for the ECG
+    // partition, one for the pulse partition. 1.5 is the standard Tukey value
+    // and the default when the config leaves it blank; larger keeps more
+    // beats (3.0 = only extreme outliers), smaller removes more.
+    double ecg_tukey_fence = 1.5;
+    double ppg_tukey_fence = 1.5;
     int min_beats_template_ecg = 0;
     int min_beats_template_ppg = 0;
 
