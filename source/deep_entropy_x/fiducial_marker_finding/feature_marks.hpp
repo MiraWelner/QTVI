@@ -126,6 +126,12 @@ public:
         double p_begin = -1.0;
         bool   valid = false;    // false => waveform or anchor unusable
 
+        // WHICH BARS ARE PLACEHOLDERS: bits kPh*. A placeholder is a bar the
+        // detector did not find, placed at the centre of the range it
+        // searched -- reported like any detection (CSV auto and bar columns
+        // alike), and drawn as a circle on the template.
+        uint8_t placeholder = 0;
+
         // The candidate curves the DETECTOR fitted, carried out so the focus
         // panel draws the same fits that placed the mark rather than fitting
         // its own. That is the whole invariant in focus_panel_widget.hpp: a
@@ -141,13 +147,50 @@ public:
         curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
 
+    // ---- EVERY BAR EXISTS -----------------------------------------------
+    //
+    // The four ECG bars (P onset, Q onset, S end, T end) with every bar the
+    // detector did not find replaced by the CENTRE OF THE RANGE IT WAS
+    // SEARCHED IN, and its kPh* bit set in .placeholder. detect_template_
+    // landmarks returns through this, so NO DETECTION IS EVER -1: every
+    // consumer -- the templates, the CSV's auto and bar columns, the
+    // envelope report -- gets a position.
+    //
+    // The ranges follow each finder's own chain back to R, so one always
+    // exists:
+    //   Q onset  [Q peak - 20 ms, Q peak], or [R - 60 ms, R] with no Q peak
+    //   S end    [R, R + 200 ms]  (S peak in R..R+100 ms, then J in 100 ms)
+    //   T end    t_end_window -- find_t_end's own window -- from J, or from
+    //            the placeholder J
+    //   P onset  [P peak - 150 ms, P peak], or [R - 450 ms, Q onset] with
+    //            no P peak
+    // clamped to the template's usable columns (40 ms inside each end).
+    static constexpr uint8_t kPhPBegin = 1, kPhQOnset = 2, kPhSEnd = 4, kPhTEnd = 8;
+    static TemplateLandmarks with_bar_placeholders(const TemplateLandmarks& lm,
+        const std::vector<double>& tmpl, double sampleRate);
+
+    // find_t_end's search window, [lo, hi], for J at j_point -- the one
+    // definition both the finder and the T-end placeholder use. hi <= lo + 3
+    // means the window is too short to search.
+    static void t_end_window(const std::vector<double>& v, double fs, int r_col,
+        double j_point, int& lo, int& hi);
+
     static void seed_bank_template(const std::vector<double>& tmpl, int r_col,
         double sampleRate, double sgn, AnchorType anchor, tbank::BankMarkerSet& out,
         curve_fit::FitMode fitMode = curve_fit::FitMode::Auto,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
 
     // the x, o, |, || or ||| markers for to mark the ppg and to be output in the csv
+    // Pulse placeholders (PpgFiducials::placeholder): as for the ECG bars, a
+    // pulse landmark not found is placed at the centre of its search range --
+    //   peak      the visible window   (first real sample .. last column)
+    //   onset     first real sample .. peak
+    //   end       peak .. last visible column
+    //   dicrotic  peak .. end
+    static constexpr uint8_t kPhPpgOnset = 1, kPhPpgPeak = 2, kPhPpgDicrotic = 4, kPhPpgEnd = 8;
+
     struct PpgFiducials {
+        uint8_t placeholder = 0;   // bits kPhPpg*: landmarks placed, not found
         double onset = -1.0;
         double peak = -1.0;
         double end = -1.0;
@@ -203,6 +246,11 @@ public:
     // circle there rather than an X and the bar has somewhere to be dragged
     // from. That is a placeholder, and notch_found is how every reader already
     // tells it from a measurement.
+    // The detector as written: -1 where it found nothing. detect_ppg_fiducials
+    // calls it and fills those with placeholders; nothing else should.
+    static PpgFiducials detect_ppg_fiducials_found(const std::vector<double>& v, int W, double ppgRate, double heightMeters = NAN,
+        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
+        double measuredNotchCol = -1.0);
     static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters = NAN,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
         double measuredNotchCol = -1.0);

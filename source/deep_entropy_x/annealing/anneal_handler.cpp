@@ -15,6 +15,7 @@
 #include "noise_marking_gui/annotation_types.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -51,6 +52,10 @@ namespace {
     struct NoiseMarkings {
         std::vector<std::pair<double, double>> ecg1, ecg2, ecg3, ppg;
         std::vector<std::pair<double, double>> accel, abp, art, art_pulm;
+        // Which markable channels the RECORDING has, in the order ecg1, ecg2,
+        // ecg3, ppg, abp, art, art_pulm. Set by anneal_one_file from the data
+        // .bin (markablePresence); computeExclusions intersects over these.
+        std::array<bool, 7> present{};
     };
 
     struct Exclusion {
@@ -150,18 +155,27 @@ namespace {
         std::vector<std::pair<double, double>> computeExclusions(const NoiseMarkings& nm)
         {
 
-            // Intersect over the channels the user actually marked. An empty list =
-            // "not present / not reviewed" and does NOT constrain -- so datasets that
-            // don't have (or don't mark) ABP/ART/ART_PULM, i.e. MESA and BITTIUM, are
-            // completely unaffected. A region is excised only where every MARKED
-            // channel agrees it is noisy.
+            // A REGION IS REMOVED ONLY WHERE R PEAK NOISE IS MARKED ON EVERY
+            // MARKABLE CHANNEL THE RECORDING HAS (ECG1-3, PPG, ABP, ART, ART_PULM;
+            // the accelerometer never counts). A channel that is in the
+            // recording but unmarked at some time is clean there, and keeps it:
+            // its empty list joins the intersection and empties it. A channel
+            // the recording does not have is not part of the rule -- its marks,
+            // if any, are ignored -- so MESA (no ECG2/3, no arterial lines) is
+            // judged on ECG1 and PPG alone.
+            //
+            // It used to intersect over channels that had at least one mark,
+            // treating an unmarked channel as "not reviewed": marks on ECG1 alone
+            // then removed data although a present, clean PPG said otherwise.
             auto e1 = nm.ecg1, e2 = nm.ecg2, e3 = nm.ecg3, pp = nm.ppg;
             auto ab = nm.abp, ar = nm.art, ap = nm.art_pulm;
-            for (auto* v : { &e1, &e2, &e3, &pp, &ab, &ar, &ap })
-                mergeOverlapping(*v);
+            const std::array<std::vector<std::pair<double, double>>*, 7> lists = { &e1, &e2, &e3, &pp, &ab, &ar, &ap };
             std::vector<std::vector<std::pair<double, double>>*> present;
-            for (auto* v : { &e1, &e2, &e3, &pp, &ab, &ar, &ap })
-                if (!v->empty()) present.push_back(v);
+            for (size_t c = 0; c < lists.size(); ++c) {
+                if (!nm.present[c]) continue;
+                mergeOverlapping(*lists[c]);
+                present.push_back(lists[c]);
+            }
 
             if (present.empty()) return {};
 
@@ -194,6 +208,18 @@ namespace {
                 r.bin_breaks.back() = total_len;
 
             return r;
+        }
+
+        // First sample (1-based) of bin b: the one after the previous bin's
+        // break. Bins tile the record -- no sample in two bins, none in none.
+        // For every bin but the last this equals breaks[b-1] - bin_size (the
+        // stride is bin_size + 1), which is how it was computed before; the
+        // last bin's break is the end of the record, where that formula
+        // reached back into the bin before it -- repeating samples, and with
+        // a tail under half a bin leaving a gap ahead of it.
+        uint64_t binBegin(const std::vector<uint64_t>& breaks, int b)
+        {
+            return (b <= 1) ? 1 : breaks[b - 2] + 1;
         }
 
         std::vector<int> roundToClosestBin(const std::vector<uint64_t>& breaks, const std::vector<uint64_t>& indices)
@@ -281,9 +307,12 @@ namespace {
             std::vector<Section> marked;
 
             for (int cur : affected) {
-                uint64_t bin_begin = breaks[cur - 1] - bin_size;
+                uint64_t bin_begin = binBegin(breaks, cur);
                 uint64_t bin_end = breaks[cur - 1];
-                double   bin_half = (double)(bin_end - (bin_size / 2));
+                // The bin's own midpoint: the same as bin_end - bin_size / 2 for
+                // a full bin, and right for a last bin that is shorter or
+                // longer than bin_size + 1 (a kept tail, or one absorbed).
+                double   bin_half = 0.5 * ((double)bin_begin + (double)bin_end);
 
                 // Collect exclusions belonging to this bin
                 std::vector<std::pair<uint64_t, uint64_t>> bin_excl;
@@ -299,18 +328,25 @@ namespace {
                     double dur_mins = ((double)(g.second - g.first) / sr) / 60.0;
                     bool too_small = dur_mins < min_mins;
 
+                    // dir 1 = merge LEFT into the previous bin; dir 0 on a
+                    // flagged fragment = merge RIGHT into the next. m <= 0 means
+                    // the fragment lies in the bin's first half. The LAST bin
+                    // follows the same rule as a middle bin -- first half goes
+                    // left -- and anything reaching its second half has no bin
+                    // to its right, so it is discarded below. (It used to read
+                    // (m >= 0) ? 1 : 0, which sent first-half fragments right,
+                    // where there is no bin, so they were lost.)
                     int dir;
                     if (cur == 1)         dir = (m <= 0) ? 2 : 0;
-                    else if (cur == bin_count)  dir = (m >= 0) ? 1 : 0;
-                    else                        dir = (m <= 0) ? 1 : 0;
+                    else                  dir = (m <= 0) ? 1 : 0;
 
                     int flag;
                     if (!too_small) { dir = 0; flag = 0; }
                     else { flag = 1; }
 
                     // Filter out unmovable edge fragments
-                    if (cur == 1 && m <= 0 && flag == 1) continue;
-                    if (cur == bin_count && m >= 0 && flag == 1) continue;
+                    if (cur == 1 && m <= 0 && flag == 1) continue;           // no bin to the left
+                    if (cur == bin_count && m > 0 && flag == 1) continue;    // no bin to the right
 
                     marked.push_back({ g.first, g.second, dir, flag });
                 }
@@ -427,7 +463,7 @@ namespace {
         std::vector<Section> good;
         for (int b = 1; b <= bin_count; ++b) {
             if (affected.count(b) == 0)
-                good.push_back({ breaks[b - 1] - bin_size, breaks[b - 1], 0, 0 });
+                good.push_back({ binBegin(breaks, b), breaks[b - 1], 0, 0 });
         }
 
         auto marked = markForMovement(exclusions, breaks, bin_count,
@@ -581,7 +617,7 @@ namespace {
     NoiseMarkings read_noise_bin(const std::filesystem::path& path) {
         /*read the bin that was made by the previous noise / annotation marker.If edited, it will be
         overwritten by the new one, both in version and in continents*/
-        
+
         NoiseMarkings m;
 
         const noise_markings::RowsResult rr =
@@ -852,6 +888,23 @@ namespace {
 
 }   // anonymous namespace
 
+namespace {
+    // Which markable channels the data .bin actually holds -- slots ECG1-3 (1-3),
+    // PPG (4), ABP (33), ART (34), ART_PULM (35) in file_to_bin's layout, in
+    // NoiseMarkings::present's order. Absent = file_to_bin's missing-channel
+    // placeholder (a single -1.0) or nothing at all.
+    std::array<bool, 7> markablePresence(const Extras& extras) {
+        constexpr int slots[7] = { 1, 2, 3, 4, 33, 34, 35 };
+        std::array<bool, 7> out{};
+        for (int c = 0; c < 7; ++c) {
+            const int s = slots[c];
+            const auto& v = (s < (int)extras.upsampled.size()) ? extras.upsampled[s] : std::vector<double>{};
+            out[c] = v.size() > 1 || (v.size() == 1 && v[0] != -1.0);
+        }
+        return out;
+    }
+}
+
 bool anneal_one_file(const std::filesystem::path& binPath, const std::filesystem::path& noisePath, const std::filesystem::path& outPath, double binLengthMin, double highpassHz, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted)
 {
     //anneals the file - includes noise if noise file exists, otherwise anneals with no noise
@@ -869,6 +922,13 @@ bool anneal_one_file(const std::filesystem::path& binPath, const std::filesystem
         noise = read_noise_bin(noisePath);
     else
         std::cerr << "  no noise file at " << noisePath << ", annealing without noise removal\n";
+    noise.present = markablePresence(extras);
+    {
+        static const char* names[7] = { "ECG1", "ECG2", "ECG3", "PPG", "ABP", "ART", "ART_PULM" };
+        std::cerr << "  removal needs R peak noise on all of:";
+        for (int c = 0; c < 7; ++c) if (noise.present[c]) std::cerr << ' ' << names[c];
+        std::cerr << "\n";
+    }
 
     auto results = AnnealSegments(raw, noise, binLengthMin);
     write_output_bin(outPath, results, extras, ecg1_inverted, ecg2_inverted, ecg3_inverted);

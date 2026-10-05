@@ -234,7 +234,9 @@ double FeatureMarks::find_j_point(const std::vector<double>& v, double fs, int r
     const int lo = cl(sPeak);
 
     int hi = cl(sPeak + ms(J_POINT_WIN_S));
-    if (hi - lo < 4) return cld(sPeakD);
+    // NOT FOUND, not the S peak: a window too short to fit used to return
+    // the S peak as J, a substitute that looked like a measurement.
+    if (hi - lo < 4) return -1.0;
     {
         const int sm = std::max(1, ms(0.006));
         auto slopeAt = [&](int i) {
@@ -248,7 +250,7 @@ double FeatureMarks::find_j_point(const std::vector<double>& v, double fs, int r
             if (s0 * slopeAt(j) < 0.0) { if (j > lo + 3) hi = j; break; }
         }
     }
-    if (hi - lo < 4) return cld(sPeakD);
+    if (hi - lo < 4) return -1.0;   // not found -- see above
     const double baseline = u[hi];
     return cld(upsample_for_fit::upsample_transition_and_curve_fit(u, sPeak, 0.10, 40, baseline, lo, hi, candOut, mode));
 }
@@ -289,9 +291,9 @@ double FeatureMarks::find_q_onset(const std::vector<double>& v, double fs, int r
             if (measured) *measured = true;
             return cld(upsample_for_fit::upsample_transition_and_curve_fit(u, qPeak, 0.10, 40, baseline, lo, hi, candOut, mode));
         }
-        // Window too short to fit: the onset is placed at the peak. A position,
-        // but not an onset measurement -- hence measured stays false.
-        return cld(qPeakD);
+        // Window too short to fit: NOT FOUND. It used to return the Q peak as
+        // the onset -- a position that was not an onset measurement.
+        return -1.0;
     }
 
     // No Q trough (monophasic R): R-upstroke onset. Walk left from R down the
@@ -367,54 +369,6 @@ double FeatureMarks::find_t_begin(const std::vector<double>& v, double fs, doubl
     return std::clamp(tb, static_cast<double>(lo), static_cast<double>(ePos));
 }
 
-// ---- WHERE THE NEXT BEAT'S R IS IN A TEMPLATE, or -1 --------------------
-//
-// For find_t_end's ceiling. A template runs from R - 0.5 RR to R + 1.4 RR, so
-// the next beat's QRS is in it; finding it is what lets the T window follow
-// the rate without being told the RR.
-//
-// "IS THIS THE NEXT R OR A TALL T?" is the whole difficulty, and width is the
-// answer: a QRS is narrow, a T wave is not. A candidate must
-//   * stand at least half as far from the PQ baseline as this beat's R does,
-//     in either direction (polarity-free: an inverted lead works the same);
-//   * be at least 250 ms after this R (no QRS follows that closely); and
-//   * fall back below a quarter of that height within 60 ms on both sides.
-// A T wave tall enough to pass the first test fails the third.
-static int nextRColumn(const std::vector<double>& v, double fs, int r_col)
-{
-    const int N = static_cast<int>(v.size());
-    if (r_col < 0 || r_col >= N || !(fs > 0.0)) return -1;
-    auto ms = [&](double s) { return static_cast<int>(std::lround(s * fs)); };
-
-    // PQ baseline: the median of 80..20 ms before R, the segment the build
-    // levels every beat on.
-    std::vector<double> pq;
-    for (int i = std::max(0, r_col - ms(0.080)); i <= std::max(0, r_col - ms(0.020)); ++i)
-        if (i < N && std::isfinite(v[i])) pq.push_back(v[i]);
-    if (pq.empty() || !std::isfinite(v[r_col])) return -1;
-    std::nth_element(pq.begin(), pq.begin() + pq.size() / 2, pq.end());
-    const double base = pq[pq.size() / 2];
-    const double rAmp = std::abs(v[r_col] - base);
-    if (!(rAmp > 0.0)) return -1;
-
-    const int half = std::max(2, ms(0.060));
-    for (int i = r_col + ms(0.250); i < N; ++i) {
-        if (!std::isfinite(v[i]) || std::abs(v[i] - base) < 0.5 * rAmp) continue;
-        // The local apex of this excursion, within 40 ms.
-        int pk = i;
-        for (int k = i; k < std::min(N, i + ms(0.040)); ++k)
-            if (std::isfinite(v[k]) && std::abs(v[k] - base) > std::abs(v[pk] - base)) pk = k;
-        const double h = std::abs(v[pk] - base);
-        auto dropsBy = [&](int from, int step) {
-            for (int k = from, n = 0; k >= 0 && k < N && n <= half; k += step, ++n)
-                if (std::isfinite(v[k]) && std::abs(v[k] - base) < 0.25 * h) return true;
-            return false;
-            };
-        if (dropsBy(pk, -1) && dropsBy(pk, +1)) return pk;
-        i = pk + half;   // a broad excursion (a T wave): skip past it
-    }
-    return -1;
-}
 
 double FeatureMarks::find_t_end(const std::vector<double>& v, double fs, int r_col, double j_point,
     upsample_for_fit::TransitionCandidates* candOut, curve_fit::FitMode mode) {
@@ -423,14 +377,17 @@ double FeatureMarks::find_t_end(const std::vector<double>& v, double fs, int r_c
     auto cl = [&](int i) { return std::clamp(i, 0, N - 1); };
     auto cld = [&](double d) { return std::clamp(d, 0.0, static_cast<double>(N - 1)); };
 
-    // ---- THE WINDOW: [J + 100 ms, the earlier of J + 700 ms and P's room] ----
+    // ---- THE WINDOW: [J + 100 ms, J + 700 ms] (t_end_window) ---------------
     //
-    // IT WAS [J + 100 ms, J + 350 ms], which CLIPPED LONG QT. Now the rightmost end is 700ms
+    // The ceiling is also B, the post-T baseline the fit levels to, and it is
+    // trimmed to the template's last real sample so B is never NaN padding.
     const int lastFin = sample_extent::lastFinite(v);
     if (lastFin < 0) return -1.0;
-    const int lo0 = cl(static_cast<int>(std::lround(j_point + 0.100 * fs)));
-    int hi = cl(static_cast<int>(std::lround(j_point + 0.700 * fs)));
-    hi = std::min(hi, lastFin);
+    int lo0 = 0, hi = 0;
+    FeatureMarks::t_end_window(v, fs, r_col, j_point, lo0, hi);
+    // NOT FOUND, not J. A window too short to search used to hand back J as
+    // T end -- a substitute that looked like a measurement (QT = Q to J).
+    if (hi <= lo0 + 3) return -1.0;
 
     // B = post-T baseline at the right edge. E = the extremum in the window, by
     // |distance| so an inverted T behaves the same.
@@ -745,7 +702,38 @@ double FeatureMarks::steepest_slope_in(const std::vector<double>& v, int lo, int
     return static_cast<double>(best);
 }
 
+// ---- EVERY PULSE LANDMARK EXISTS ------------------------------------------
+//
+// The detector below, then every landmark it did not find (-1) placed at the
+// centre of its search range and flagged in .placeholder (kPhPpg*). The peak
+// first, since the other three ranges hang off it. Only the four that are
+// drawn as bars or the peak glyph are placed; the derived points (t50, t80,
+// peak2, ...) are recomputed from these by reactive_ppg wherever they are
+// shown.
 FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters,
+    curve_fit::PeakFitMode peakMode, double measuredNotchCol)
+{
+    PpgFiducials g = detect_ppg_fiducials_found(v, W, ppgRate, heightMeters, peakMode, measuredNotchCol);
+    const int N = static_cast<int>(v.size());
+    if (N < 1) return g;                       // no samples at all: nothing to place on
+    const int Wc = std::clamp(W, 1, N);
+    const double first = std::clamp(static_cast<double>(std::max(0, sample_extent::firstFinite(v))),
+        0.0, static_cast<double>(Wc - 1));
+    const double last = static_cast<double>(Wc - 1);
+    auto centre = [&](double lo, double hi) {
+        lo = std::clamp(lo, first, last);
+        hi = std::clamp(hi, first, last);
+        if (hi < lo) std::swap(lo, hi);
+        return std::round(0.5 * (lo + hi));
+        };
+    if (!(g.peak >= 0.0)) { g.peak = centre(first, last);         g.placeholder |= kPhPpgPeak; }
+    if (!(g.onset >= 0.0)) { g.onset = centre(first, g.peak);      g.placeholder |= kPhPpgOnset; }
+    if (!(g.end >= 0.0)) { g.end = centre(g.peak, last);         g.placeholder |= kPhPpgEnd; }
+    if (!(g.dicrotic >= 0.0)) { g.dicrotic = centre(g.peak, g.end);   g.placeholder |= kPhPpgDicrotic; }
+    return g;
+}
+
+FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials_found(const std::vector<double>& v, int W, double ppgRate, double heightMeters,
     curve_fit::PeakFitMode peakMode, double measuredNotchCol)
 {
     PpgFiducials g;
@@ -1499,7 +1487,69 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     // position surviving keep().
     out.q_onset_found = qFound && (out.q_onset >= 0.0);
     out.valid = true;
-    return out;
+    // NO -1 LEAVES HERE: a bar not found is placed at the centre of the range
+    // it was searched in, and flagged (TemplateLandmarks::placeholder).
+    return with_bar_placeholders(out, tmplIn, sampleRate);
+}
+
+// find_t_end's window: [J + 100 ms, J + 700 ms], trimmed to the last real
+// sample. Fixed from J -- nothing to do with the next R. ONE DEFINITION, used
+// by find_t_end and by the T-end placeholder, so a placeholder sits at the
+// centre of exactly the range T end was searched in.
+void FeatureMarks::t_end_window(const std::vector<double>& v, double fs, int r_col,
+    double j_point, int& lo, int& hi)
+{
+    const int N = static_cast<int>(v.size());
+    lo = hi = 0;
+    if (N < 4 || r_col < 0 || r_col >= N) return;
+    auto cl = [&](int i) { return std::clamp(i, 0, N - 1); };
+    const int lastFin = sample_extent::lastFinite(v);
+    if (lastFin < 0) return;
+    lo = cl(static_cast<int>(std::lround(j_point + 0.100 * fs)));
+    hi = std::min(cl(static_cast<int>(std::lround(j_point + 0.700 * fs))), lastFin);
+}
+
+FeatureMarks::TemplateLandmarks FeatureMarks::with_bar_placeholders(
+    const TemplateLandmarks& in, const std::vector<double>& tmpl, double fs)
+{
+    TemplateLandmarks lm = in;
+    lm.placeholder = 0;
+    const int n = static_cast<int>(tmpl.size());
+    if (!lm.valid || n < 2 || fs <= 0.0 || !(lm.r_peak >= 0.0)) return lm;
+    const double R = lm.r_peak;
+    // The usable columns: detect_template_landmarks blanks 40 ms at each end.
+    const double edge = std::max(1.0, std::round(0.040 * fs));
+    const double first = std::min(edge, static_cast<double>(n - 1));
+    const double last = std::max(first, static_cast<double>(n - 1) - edge);
+    auto centre = [&](double lo, double hi) {
+        lo = std::clamp(lo, first, last);
+        hi = std::clamp(hi, first, last);
+        if (hi < lo) std::swap(lo, hi);
+        return std::round(0.5 * (lo + hi));
+        };
+    if (!(lm.q_onset >= 0.0)) {
+        lm.q_onset = (lm.q_peak >= 0.0)
+            ? centre(lm.q_peak - Q_ONSET_WIN_S * fs, lm.q_peak)
+            : centre(R - (Q_PEAK_WIN_S + Q_ONSET_WIN_S) * fs, R);
+        lm.placeholder |= kPhQOnset;
+    }
+    if (!(lm.s_end >= 0.0)) {
+        lm.s_end = centre(R, R + (S_PEAK_WIN_S + J_POINT_WIN_S) * fs);
+        lm.placeholder |= kPhSEnd;
+    }
+    if (!(lm.t_end >= 0.0)) {
+        int lo = 0, hi = 0;
+        t_end_window(tmpl, fs, static_cast<int>(std::lround(R)), lm.s_end, lo, hi);
+        lm.t_end = centre(lo, std::max(lo, hi));
+        lm.placeholder |= kPhTEnd;
+    }
+    if (!(lm.p_begin >= 0.0)) {
+        lm.p_begin = (lm.p_peak >= 0.0)
+            ? centre(lm.p_peak - 0.150 * fs, lm.p_peak)
+            : centre(R - 0.450 * fs, std::min(lm.q_onset, R - 0.050 * fs));
+        lm.placeholder |= kPhPBegin;
+    }
+    return lm;
 }
 
 void FeatureMarks::seed_bank_template(const std::vector<double>& tmpl, int r_col,
@@ -1536,4 +1586,5 @@ void FeatureMarks::seed_pulse_bank_template(const std::vector<double>& tmpl, dou
     out.end_auto = pf.end;
     out.end = pf.end;
     out.notch_found = pf.notch_found;
+    out.auto_placeholder = pf.placeholder;
 }

@@ -628,6 +628,7 @@ void BinPlotWidget::setMarker(Marker m, double idx) {
     // per-slot array now, so a P onset cannot precede the window, and pinning
     // it would only hide a real disagreement at the edge.
     m_markers[m] = idx;
+    m_markerPlaceholder[m] = false;   // a written position is a real one
     rebaseDragOrigin(m, idx);
     update();
 }
@@ -1326,7 +1327,20 @@ void BinPlotWidget::paintEvent(QPaintEvent*) {
         pen.setStyle(overlay ? Qt::DotLine
             : (markerIsBegin(m) ? Qt::DashLine : Qt::SolidLine));
         p.setPen(pen);
-        p.drawLine(QPointF(mx, margin_top), QPointF(mx, h - margin_bottom));
+        if (m_markerPlaceholder[m] && vec && !vec->empty()) {
+            // PLACED, NOT FOUND: a circle on the trace instead of a line.
+            const bool isPulse = (ch != Channel::Ecg);
+            const double lo = isPulse ? pLo : yLo, hi = isPulse ? pHi : yHi;
+            const double r = (hi - lo > 1e-10) ? (hi - lo) : 1.0;
+            double val = FeatureMarks::sample_at(*vec, drawIdx);
+            if (std::isnan(val)) val = 0.5 * (lo + hi);
+            const double my = margin_top + ph - (val - lo) / r * ph;
+            p.setBrush(Qt::NoBrush);
+            p.setPen(QPen(pen.color(), 2));
+            p.drawEllipse(QPointF(mx, my), marker_circle_radius + 2, marker_circle_radius + 2);
+        }
+        else
+            p.drawLine(QPointF(mx, margin_top), QPointF(mx, h - margin_bottom));
         p.drawText(
             QPointF(mx + 2, margin_top + marker_text_y_offset(m)),
             overlay

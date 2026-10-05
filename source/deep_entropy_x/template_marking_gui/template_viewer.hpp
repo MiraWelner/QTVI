@@ -35,6 +35,7 @@
 #include <QVBoxLayout>
 #include <QShortcut>
 #include <QKeyEvent>
+#include <QCloseEvent>
 #include <QApplication>
 #include <QGuiApplication>
 #include <QStatusBar>
@@ -383,6 +384,17 @@ private:
     bool m_showExtrema = true;
     // Right / S: next page, or Finish on the last one. Left / W: previous page.
     void wirePageKeys();
+    // CLOSING THE WINDOW IS A DECISION, not a silent exit. main waits only on
+    // finished(); a window closed with the title-bar X used to leave it
+    // waiting forever with no window, to be killed -- and a killed session
+    // leaves its noise-marking log behind, so the next run skipped the record
+    // and its markings were never written. See closeEvent.
+    void closeEvent(QCloseEvent* ev) override;
+    bool m_finishedEmitted = false;   // set wherever finished() is emitted
+    bool m_saved = false;             // set only by a completed save
+public:
+    bool saved() const { return m_saved; }
+private:
     // Push the members back into the radio group and the spin box with their
     // signals blocked, so the checked button always names the alignment the
     // panels are actually drawn on.
@@ -509,7 +521,11 @@ private:
     double binSpanSeconds(int binIdx) const;
 
     void clearFocusPanels();
-    tbank::BankMarkerSet barsForPanel(const BinPlotWidget* pw, const time_bin& b, int lead, int slot) const;
+    // placeholderOut (optional): FeatureMarks::kPh* bits of the bars this
+    // returns that are the detector's PLACEHOLDERS -- not found, placed at the
+    // centre of their search range -- and not an operator edit.
+    tbank::BankMarkerSet barsForPanel(const BinPlotWidget* pw, const time_bin& b, int lead, int slot,
+        uint8_t* placeholderOut = nullptr) const;
 
     struct SdMsModel {
         std::vector<double>  sdMs;        // per column, NaN where floored

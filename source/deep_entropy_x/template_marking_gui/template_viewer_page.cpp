@@ -1059,9 +1059,10 @@ void TemplateViewerWindow::showPage() {
 // showsBar decides which bars an alignment carries, so P shows one, Q three,
 // R all four, J one -- unchanged.
 tbank::BankMarkerSet TemplateViewerWindow::barsForPanel(const BinPlotWidget* pw,
-    const time_bin& b, int lead, int slot) const
+    const time_bin& b, int lead, int slot, uint8_t* placeholderOut) const
 {
     tbank::BankMarkerSet out;   // all -1
+    if (placeholderOut) *placeholderOut = 0;
     if (!pw) return out;
 
     const AnchorType a = currentGridAnchor();
@@ -1098,6 +1099,16 @@ tbank::BankMarkerSet TemplateViewerWindow::barsForPanel(const BinPlotWidget* pw,
         return -1.0;
         };
 
+    // A bar that falls through to the detection is a placeholder when the
+    // detector flagged it so; an operator edit never is.
+    uint8_t ph = 0;
+    const auto phBit = [](int marker) -> uint8_t {
+        if (marker == anchor_view::p_begin) return FeatureMarks::kPhPBegin;
+        if (marker == anchor_view::q_begin) return FeatureMarks::kPhQOnset;
+        if (marker == anchor_view::j_point) return FeatureMarks::kPhSEnd;
+        if (marker == anchor_view::t_end)   return FeatureMarks::kPhTEnd;
+        return 0;
+        };
     const auto pick = [&](int marker, double detected) -> double {
         if (m_forceAlign && !anchor_view::showsBar(a, marker)) return -1.0;
         if (ownBars) {
@@ -1109,12 +1120,15 @@ tbank::BankMarkerSet TemplateViewerWindow::barsForPanel(const BinPlotWidget* pw,
             const double edit = field(b.slotMarks(lead, slot, owner), marker);
             if (edit >= 0.0) return edit + b.frameShift(lead, owner, a);
         }
-        return lm.valid ? detected : -1.0;     // otherwise the detection
+        if (!lm.valid) return -1.0;
+        if (lm.placeholder & phBit(marker)) ph |= phBit(marker);
+        return detected;                       // otherwise the detection
         };
     out.p_begin = pick(anchor_view::p_begin, lm.p_begin);
     out.q_onset = pick(anchor_view::q_begin, lm.q_onset);
     out.s_end = pick(anchor_view::j_point, lm.s_end);
     out.t_end = pick(anchor_view::t_end, lm.t_end);
+    if (placeholderOut) *placeholderOut = ph;
     return out;
 }
 
@@ -1138,8 +1152,7 @@ tbank::BankMarkerSet TemplateViewerWindow::barsForPanel(const BinPlotWidget* pw,
 // WHICH TWO. The largest and the smallest P-to-T range: max - min of the
 // shifted row from P onset to T end, the panel's own bars where it draws
 // them and its own detection where it does not (a forced alignment hides some
-// bars). Q onset stands in for a template with no P wave. A row covering under
-// half that window is not ranked.
+// bars). A row covering under half that window is not ranked.
 //
 // DRAWN AS THE TRACE IS: notched with maybeNotchTrace and divided by the same
 // QRS reference normalizeEcgTrace uses for this slot, and blanked wherever the
@@ -1177,12 +1190,10 @@ std::vector<std::vector<double>> TemplateViewerWindow::ecgExtremeTraces(
     // The P-to-T window, in the drawn frame.
     const tbank::BankMarkerSet bars = barsForPanel(pw, b, lead, slot);
     const FeatureMarks::TemplateLandmarks& lm = pw->detectedLandmarks();
-    auto pickCol = [&](double bar, double det) {
-        if (bar >= 0.0) return bar;
-        return (lm.valid && det >= 0.0) ? det : -1.0;
-        };
-    double start = pickCol(bars.p_begin, lm.p_begin);
-    if (start < 0.0) start = pickCol(bars.q_onset, lm.q_onset);   // no P wave
+    // A bar a forced alignment hides comes from the detection, which always
+    // has a position (a placeholder where nothing was found).
+    auto pickCol = [&](double bar, double det) { return (bar >= 0.0) ? bar : (lm.valid ? det : -1.0); };
+    const double start = pickCol(bars.p_begin, lm.p_begin);
     const double stop = pickCol(bars.t_end, lm.t_end);
     if (start < 0.0 || !(stop > start)) return out;
     const std::size_t k0 = static_cast<std::size_t>(std::ceil(start));
@@ -1363,8 +1374,9 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
     // keep() folds to -1: the P bar simply vanished.
     pw->setAuto(b, currentGridAnchor());
 
+    uint8_t ecgPh = 0;
     const tbank::BankMarkerSet mk =
-        barsForPanel(pw, b, channel, templateIdx);
+        barsForPanel(pw, b, channel, templateIdx, &ecgPh);
     // Bin first, for the arterial markers (a bank slot has no ABP/ART waveform
     // of its own). The seven ECG bars are overridden below; the PULSE bars are
     // overridden here, from this slot's own waveform.
@@ -1393,6 +1405,19 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
             pw->setMarker(BinPlotWidget::PpgEnd, pm.end);
             pw->setMarker(BinPlotWidget::PpgT50, rp.t50);
             pw->setMarker(BinPlotWidget::PpgT80, rp.t80);
+            // A pulse bar still at its detector value, where the detector only
+            // PLACED it (not found), is a placeholder: drawn as a circle.
+            const auto stillPlaced = [&](double now, double autoVal, uint8_t bit) {
+                return (pm.auto_placeholder & bit) && now >= 0.0 && std::abs(now - autoVal) < 1e-9;
+                };
+            pw->setMarkerPlaceholder(BinPlotWidget::PpgOnset,
+                stillPlaced(pm.onset, pm.onset_auto, FeatureMarks::kPhPpgOnset));
+            pw->setMarkerPlaceholder(BinPlotWidget::PpgDicrotic,
+                stillPlaced(pm.dicrotic, pm.dicrotic_auto, FeatureMarks::kPhPpgDicrotic));
+            pw->setMarkerPlaceholder(BinPlotWidget::PpgEnd,
+                stillPlaced(pm.end, pm.end_auto, FeatureMarks::kPhPpgEnd));
+            pw->setMarkerPlaceholder(BinPlotWidget::PpgPeak,
+                (pm.auto_placeholder & FeatureMarks::kPhPpgPeak) != 0);
         }
     }
     else {
@@ -1452,6 +1477,11 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
     }
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
+    // The bars the detector only PLACED (not found, no edit): circles.
+    pw->setMarkerPlaceholder(BinPlotWidget::EcgPBegin, (ecgPh & FeatureMarks::kPhPBegin) != 0);
+    pw->setMarkerPlaceholder(BinPlotWidget::EcgQBegin, (ecgPh & FeatureMarks::kPhQOnset) != 0);
+    pw->setMarkerPlaceholder(BinPlotWidget::EcgSEnd, (ecgPh & FeatureMarks::kPhSEnd) != 0);
+    pw->setMarkerPlaceholder(BinPlotWidget::EcgTEnd, (ecgPh & FeatureMarks::kPhTEnd) != 0);
 
     // ---- THIS SLOT'S OWN GLYPHS, ON THE TRACE THIS PANEL DRAWS -----------
     //

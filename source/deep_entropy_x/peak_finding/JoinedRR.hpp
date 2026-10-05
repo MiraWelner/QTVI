@@ -3,6 +3,8 @@
 // Ensemble R-R detection using multiple weighted algorithms (header-only)
 // ============================================================================
 #pragma once
+#include <array>
+#include <map>          // weighted_peaks; was only reaching here through other headers
 #include "stats_utils.hpp"
 #include "rpeakdetect.hpp"
 #include "pan_tompkin.hpp"
@@ -15,6 +17,14 @@
  */
 struct JoinedRRResult {
     std::vector<std::size_t> peaks;         ///< Accepted R-peak sample indices
+
+    // ---- HOW EACH PEAK WAS VOTED IN (diagnostics; the pipeline reads only
+    // peaks). Filled on every call so a test, or a curious reader, can see
+    // the ensemble at work rather than just its verdict.
+    std::array<std::vector<std::size_t>, 6> detector_peaks;  ///< each detector's own output, after refinement
+    std::array<double, 6> detector_weights{};                ///< the weight each detector's detections carry
+    std::vector<double> peak_weight;                         ///< per accepted peak: the summed weight it was accepted on
+    std::vector<std::array<int, 6>> peak_votes;              ///< per accepted peak: detections each detector merged into it
 };
 
 namespace joinedrr_detail {
@@ -110,12 +120,17 @@ inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, double ecgRate
     for (size_t r = 3; r < 6; ++r)
         output[r] = RPeakfromRWave(ecgSeg, output[r], ecgRate, inverted);
 
-    // 3. Build weighted detection list
-    struct DetWithWeight { size_t pos; double weight; };
+    for (int i = 0; i < 6; ++i) {
+        result.detector_peaks[i] = output[i];
+        result.detector_weights[i] = weights[i];
+    }
+
+    // 3. Build weighted detection list (each detection remembers its detector)
+    struct DetWithWeight { size_t pos; double weight; int det; };
     vector<DetWithWeight> all_weighted;
     for (int i = 0; i < 6; ++i)
         for (size_t p : output[i])
-            all_weighted.push_back({ p, weights[i] });
+            all_weighted.push_back({ p, weights[i], i });
 
     std::sort(all_weighted.begin(), all_weighted.end(),
         [](const auto& a, const auto& b) { return a.pos < b.pos; });
@@ -159,5 +174,15 @@ inline JoinedRRResult JoinedRR_full(const vector<double>& ecgSeg, double ecgRate
 
     std::sort(candidates.begin(), candidates.end());
     result.peaks = candidates;
+
+    // The vote behind each accepted peak: which detections ended up merged
+    // onto it, and the weight it was accepted on.
+    for (size_t pos : result.peaks) {
+        std::array<int, 6> votes{};
+        for (const auto& dw : all_weighted)
+            if (dw.pos == pos) ++votes[dw.det];
+        result.peak_votes.push_back(votes);
+        result.peak_weight.push_back(weighted_peaks[pos]);
+    }
     return result;
 }

@@ -1,29 +1,40 @@
 // ============================================================================
-// test.cpp -- QTVI_Tests (Google Test)
+// test1a_config_dataloading.cpp -- QTVI_Tests (Google Test)
 //
-// REQUIREMENT: Load config.csv for all three datasets. Verify each channel's
-// rate pair, absent channels report zero, and the use_consensus_rpeak flag
+// REQUIREMENT: Load config.csv for all datasets. Verify each channel's rate
+// pair, absent channels report zero, and the use_consensus_rpeak flag
 // defaults to true when blank.
 //
-// FIXTURE: QTVI_Tests\data\config\config.csv -- a small config written for
-// this test, so every value in it is known. Its three rows:
-//   MESA     use_consensus_rpeak BLANK  (the default case)
-//   BITTIUM  use_consensus_rpeak false  (proves the column is actually read)
-//   CHAOS    use_consensus_rpeak 1
-// original_file_path and output_folder are filled in on purpose: if either is
-// blank, load_config opens a folder-picker dialog and the test would hang.
+// FIXTURE: QTVI_Tests\data\config\config.csv -- a copy of the real config
+// (mesa, bittium, chaos, shhs), frozen here, with three fixture edits:
+//   original_file_path / output_folder = "input" / "output" for every dataset:
+//       blank, load_config opens a folder-picker dialog and the test hangs;
+//       real D:\ paths, it makes folders in the real output tree
+//   use_consensus_rpeak: MESA BLANK (tests the default), BITTIUM FALSE (proves
+//       the column is read -- TRUE alone cannot, it equals the default)
+//
+// KEEPING IT IN STEP: the fixture is frozen, so editing the REAL config never
+// breaks this test. To test a newer config, copy it here again, redo the
+// three edits, and update kExpected below to match.
 //
 // PROJECT SETTINGS this file needs (QTVI_Tests -> Properties):
 //   C/C++ -> Preprocessor -> Preprocessor Definitions:
 //       TESTS_DATA_DIR=R"($(ProjectDir)data)"
 //   C/C++ -> General -> Additional Include Directories:
-//       $(SolutionDir)QTVI      (wherever your #include paths start)
+//       $(ProjectDir)..\source\deep_entropy_x   (the folder holding config_file_handling\)
 //   Qt Project Settings -> Qt Modules: Widgets   (config_loader uses QFileDialog)
 // ============================================================================
 #include "pch.h"                                     // the template's; it includes gtest
 #include "config_file_handling/config_loader.hpp"   // the code under test
 
+// Without this definition every fixture path below fails to compile, with
+// errors that do not name the cause. Stop with one that does.
+#ifndef TESTS_DATA_DIR
+#error "TESTS_DATA_DIR is not defined. QTVI_Tests -> Properties (All Configurations, All Platforms) -> C/C++ -> Preprocessor -> Preprocessor Definitions: add  TESTS_DATA_DIR=R\"($(ProjectDir)data)\""
+#endif
+
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <string>
 
@@ -43,17 +54,29 @@ struct Expected {
 
 static const Expected kExpected[] = {
     { 1, "MESA",
-      { {"ecg", {256, 1000}}, {"ppg", {256, 500}}, {"flow", {32, 32}},
-        {"thor", {32, 32}}, {"abdo", {32, 32}}, {"spo2", {1, 1}} },
-      true },    // blank -> must default to true
+      { {"ecg", {256, 1000}}, {"ppg", {256, 500}}, {"eeg", {256, 1000}},
+        {"eog_l", {256, 500}}, {"eog_r", {256, 500}}, {"emg", {256, 500}},
+        {"pres", {32, 32}}, {"flow", {32, 32}}, {"snore", {32, 32}},
+        {"thor", {32, 32}}, {"abdo", {32, 32}}, {"leg", {32, 32}},
+        {"auxac", {32, 32}}, {"pos", {32, 32}}, {"therm", {32, 32}},
+        {"oxstatus", {1, 1}}, {"spo2", {1, 1}}, {"hr", {1, 1}},
+        {"dhr", {256, 500}} },
+      true },   // blank -> must default to true
     { 2, "BITTIUM",
-      { {"ecg", {500, 1000}}, {"accel", {25, 25}}, {"temp", {1, 1}},
-        {"marker", {500, 500}}, {"pacemaker", {500, 500}} },
-      false },   // "false" -> false
+      { {"ecg", {500, 1000}}, {"ppg", {0, 500}}, {"accel", {25, 25}},
+        {"temp", {1, 1}}, {"marker", {1, 1}}, {"pacemaker", {8, 8}} },
+      false },   // "FALSE" -> false
     { 3, "CHAOS",
-      { {"ecg", {500, 1000}}, {"ppg", {125, 500}}, {"cvp", {125, 500}},
-        {"abp", {125, 500}}, {"art", {125, 500}}, {"art_pulm", {125, 500}} },
-      true },    // "1" -> true
+      { {"ecg", {500, 1000}}, {"ppg", {125, 500}}, {"cvp", {125, 125}},
+        {"abp", {125, 500}}, {"art", {125, 500}}, {"art_pulm", {125, 500}},
+        {"resp", {62.5, 500}} },
+      true },   // "TRUE" -> true
+    { 4, "SHHS",
+      { {"ecg", {125, 1000}}, {"eeg", {125, 500}}, {"eog_l", {50, 500}},
+        {"eog_r", {50, 500}}, {"emg", {125, 500}}, {"flow", {10, 32}},
+        {"thor", {10, 32}}, {"abdo", {10, 32}}, {"pos", {1, 1}},
+        {"oxstatus", {1, 1}}, {"spo2", {1, 1}}, {"hr", {1, 1}} },
+      true },   // "TRUE" -> true
 };
 
 // ---- every rate pair config_entry has ---------------------------------------
@@ -100,8 +123,43 @@ static const RatePair kAllPairs[] = {
 // load_config reads "config.csv" from the CURRENT folder and creates output
 // folders next to it. So: copy the fixture into a scratch folder, switch into
 // it, load, and switch back -- the fixture in data\ is never touched.
+// THE FIXTURE MUST NOT MAKE load_config OPEN A WINDOW. A blank
+// original_file_path or output_folder makes load_config open a folder dialog,
+// and a test program has no running Qt application -- so Qt stops the whole
+// program ("Must construct a QApplication before a QWidget") and every test
+// after it is lost. Check those two rows first, and fail with the reason.
+static bool fixturePathsFilled(const fs::path& fixture) {
+    std::ifstream f(fixture);
+    if (!f) { ADD_FAILURE() << "cannot open the fixture: " << fixture.string(); return false; }
+    std::string line;
+    bool ok = true;
+    while (std::getline(f, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const std::string key = line.substr(0, line.find(','));
+        if (key != "original_file_path" && key != "output_folder") continue;
+        // every cell after the first must be non-blank
+        size_t start = line.find(',');
+        while (start != std::string::npos) {
+            const size_t end = line.find(',', start + 1);
+            const std::string cell = line.substr(start + 1,
+                end == std::string::npos ? std::string::npos : end - start - 1);
+            if (cell.find_first_not_of(" \t") == std::string::npos) {
+                ADD_FAILURE() << "fixture " << fixture.string() << ": '" << key
+                    << "' has a blank cell -- load_config would open a folder dialog "
+                    "and crash the test program. Fill every cell in that row (e.g. "
+                    "'input' / 'output').";
+                ok = false;
+                break;
+            }
+            start = end;
+        }
+    }
+    return ok;
+}
+
 static bool loadFromFixture(int choice, config_entry& out) {
     const fs::path fixture = fs::path(TESTS_DATA_DIR) / "config" / "config.csv";
+    if (!fixturePathsFilled(fixture)) return false;
     const fs::path scratch = fs::temp_directory_path() / "qtvi_test_config";
     fs::create_directories(scratch);
     fs::copy_file(fixture, scratch / "config.csv", fs::copy_options::overwrite_existing);
@@ -115,13 +173,14 @@ static bool loadFromFixture(int choice, config_entry& out) {
 
 // ---- the tests: one requirement each ----------------------------------------
 //
-// TEST(Group, Name): Test Explorer lists them as Config > AllThreeDatasetsLoad, ...
+// TEST(Group, Name): Test Explorer lists them as
+// test1a_config_dataloading > AllDatasetsLoad, ...
 // EXPECT_*  records a failure and carries on (the CHECK of before);
 // ASSERT_*  records a failure and stops this test (the REQUIRE of before).
 // SCOPED_TRACE adds "MESA" etc. to any failure inside the loop, so you can
 // tell WHICH dataset failed.
 
-TEST(Config, AllThreeDatasetsLoad) {
+TEST(test1a_config_dataloading, AllDatasetsLoad) {
     for (const Expected& e : kExpected) {
         SCOPED_TRACE(e.dataset);
         config_entry cfg;
@@ -130,23 +189,28 @@ TEST(Config, AllThreeDatasetsLoad) {
     }
 }
 
-TEST(Config, EachChannelsRatePairIsRead) {
+TEST(test1a_config_dataloading, EachChannelsRatePairIsRead) {
     for (const Expected& e : kExpected) {
         SCOPED_TRACE(e.dataset);
         config_entry cfg;
         ASSERT_TRUE(loadFromFixture(e.choice, cfg));   // no point checking rates if it did not load
         for (const auto& [name, rate] : e.rates) {
             SCOPED_TRACE(name);
+            bool known = false;
             for (const RatePair& p : kAllPairs) {
                 if (name != p.name) continue;
+                known = true;
                 EXPECT_EQ(cfg.*(p.raw), rate.first);
                 EXPECT_EQ(cfg.*(p.up), rate.second);
             }
+            // A name kAllPairs does not have (a typo in kExpected) would
+            // otherwise be skipped, and the test would pass checking nothing.
+            EXPECT_TRUE(known);
         }
     }
 }
 
-TEST(Config, AbsentChannelsReportZero) {
+TEST(test1a_config_dataloading, AbsentChannelsReportZero) {
     for (const Expected& e : kExpected) {
         SCOPED_TRACE(e.dataset);
         config_entry cfg;
@@ -160,7 +224,7 @@ TEST(Config, AbsentChannelsReportZero) {
     }
 }
 
-TEST(Config, UseConsensusRpeakDefaultsToTrueWhenBlank) {
+TEST(test1a_config_dataloading, UseConsensusRpeakDefaultsToTrueWhenBlank) {
     for (const Expected& e : kExpected) {
         SCOPED_TRACE(e.dataset);
         config_entry cfg;

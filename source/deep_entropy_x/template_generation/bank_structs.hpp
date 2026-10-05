@@ -365,6 +365,10 @@ namespace tbank {
         double onset_auto = -1.0, peak_auto = -1.0, dicrotic_auto = -1.0;
         double peak2_auto = -1.0, end_auto = -1.0;
         bool notch_found = false;
+        // Which *_auto values the detector PLACED rather than found
+        // (FeatureMarks::kPhPpg* bits). A bar still equal to its *_auto value
+        // is drawn as a circle when that bit is set. Not persisted.
+        uint8_t auto_placeholder = 0;
 
         // The height the Foot variant's rows were levelled at, 0 at the foot to
         // 100 at the apex. PERSISTED, because Auto resolves it per column from

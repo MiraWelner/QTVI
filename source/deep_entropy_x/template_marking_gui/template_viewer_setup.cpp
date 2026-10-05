@@ -274,6 +274,7 @@ void TemplateViewerWindow::loadSubject(const template_structs::TemplateFile& tf,
     if (m_bins.empty()) {
         QMessageBox::warning(this, "Error",
             "No bins in the template data for " + subjectId);
+        m_finishedEmitted = true;
         emit finished();
         return;
     }
@@ -438,7 +439,8 @@ void TemplateViewerWindow::seedOneBin(time_bin& b) const
             // fabricated position between the peak and t80, and the two
             // disagreed. The notch bar is now seeded from
             // seed_pulse_bank_template's detector result and nowhere else, so
-            // an undetected notch leaves pm.dicrotic at -1 and draws no bar.
+            // an undetected notch is placed at the centre of its range by the
+            // detector and drawn as a circle (FeatureMarks::kPhPpgDicrotic).
         }
     }
 
@@ -504,6 +506,7 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
         // crash, not just a cosmetic misplacement). Rejected markers keep
         // whatever seed_all() already put there.
         size_t rejectedCount = 0;
+        size_t reanchoredLeads = 0;   // (bin, lead) pairs whose saved bars moved with R
         // DOUBLE, and the bound compared as one: casting a fractional saved
         // position to size_t truncates, which would let len-0.5 through.
         auto safeIdx = [&](double savedVal, double currentVal, size_t len) -> double {
@@ -537,6 +540,33 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                     const int nSaved = s.slotCount(c);
                     const int nNow =
                         static_cast<int>(d.ecg_bank[c].templates.size());
+                    // RE-ANCHOR ON R. A saved bar is a COLUMN of the template
+                    // frame it was placed on, and the frame's R column is set
+                    // by the bin's longest RR (alignment.hpp: 0.5 x max RR).
+                    // If that changed since the file was written -- a beat
+                    // missed or found, noise re-marked, a different excision
+                    // -- R moved, and a bar applied at its old column lands
+                    // the same distance off the waveform it was placed on:
+                    // Q, S and T all shifted by one amount, T end before the
+                    // T peak. The file stores the R column it was saved
+                    // against (r_peak_ch), and seedOneBin has just measured
+                    // this pass's, so every bar of this lead moves by the
+                    // difference and keeps its place relative to R. Whole
+                    // samples only: the frame moves in whole columns, and
+                    // r_peak_ch's sub-sample refinement must not nudge bars
+                    // that did not move. A file from before r_peak_ch was
+                    // stored (-1) is applied as before.
+                    double rShift = 0.0;
+                    if (s.r_peak_ch[c] >= 0.0 && d.r_peak_ch[c] >= 0.0)
+                        rShift = std::round(d.r_peak_ch[c] - s.r_peak_ch[c]);
+                    if (rShift != 0.0 && nSaved > 0) {
+                        ++reanchoredLeads;
+                        fprintf(stderr, "[markers] bin %zu lead %d: R moved %+.0f samples "
+                            "since these marks were saved (column %.1f -> %.1f); "
+                            "the saved bars are moved with it\n",
+                            i, c + 1, rShift, s.r_peak_ch[c], d.r_peak_ch[c]);
+                    }
+                    auto withR = [rShift](double v) { return v >= 0.0 ? v + rShift : v; };
                     for (int slot = 0; slot < nSaved && slot < nNow; ++slot) {
                         // THE SLOT'S OWN TEMPLATE LENGTH, for every slot
                         // including _A. A saved position is only meaningful on
@@ -574,10 +604,10 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                                 d.ecg_bank[c].templates[slot].marks(kv.first);
                             // BARS ONLY. p_peak is not in the record and not on
                             // the struct: readers call reactive_ecg on these.
-                            dm.p_begin = safeIdx(sm.p_begin, dm.p_begin, len);
-                            dm.q_onset = safeIdx(sm.q_onset, dm.q_onset, len);
-                            dm.s_end = safeIdx(sm.s_end, dm.s_end, len);
-                            dm.t_end = safeIdx(sm.t_end, dm.t_end, len);
+                            dm.p_begin = safeIdx(withR(sm.p_begin), dm.p_begin, len);
+                            dm.q_onset = safeIdx(withR(sm.q_onset), dm.q_onset, len);
+                            dm.s_end = safeIdx(withR(sm.s_end), dm.s_end, len);
+                            dm.t_end = safeIdx(withR(sm.t_end), dm.t_end, len);
                         }
                     }
                 }
@@ -726,6 +756,9 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                 "current templates and were rejected (kept at auto-seed) instead of applied\n",
                 rejectedCount, markingsBinPath.toStdString().c_str());
         }
+        if (reanchoredLeads > 0)
+            fprintf(stderr, "[markers] %zu bin/lead(s) had moved since they were marked; "
+                "their bars were re-anchored on R (listed above)\n", reanchoredLeads);
         fprintf(stderr, "[markers] reloaded from %s (%zu of %zu bin(s) restored)\n",
             markingsBinPath.toStdString().c_str(), n, m_bins.size());
         return true;
@@ -842,6 +875,40 @@ void TemplateViewerWindow::wireExtremaToggle() {
         for (BinPlotWidget* pw : m_allPlots)
             if (pw) pw->setShowExtrema(on);
         });
+}
+
+// ---- CLOSING THE WINDOW ------------------------------------------------------
+//
+// Save / Don't Save / Cancel, the way any editor asks:
+//   Save        exactly Finish (save_bin_and_csv). If the save fails it shows its
+//               own dialog and the window stays open, as Finish does.
+//   Don't Save  finished() without writing anything, so main moves on to the
+//               next record instead of waiting with no window. The record is
+//               redone on the next run: main counts a record as done only once
+//               its template markings exist.
+//   Cancel      back to marking.
+// After finished() has been emitted -- by a save or by Don't Save -- a close
+// is just a close.
+void TemplateViewerWindow::closeEvent(QCloseEvent* ev) {
+    if (m_finishedEmitted) { ev->accept(); return; }
+    const QMessageBox::StandardButton r = QMessageBox::question(this,
+        "Close " + m_subjectId,
+        "Save this record's template markings before closing?\n\n"
+        "Don't Save closes without writing anything; the record is redone "
+        "on the next run.",
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save);
+    if (r == QMessageBox::Cancel) { ev->ignore(); return; }
+    if (r == QMessageBox::Save) {
+        save_bin_and_csv();
+        if (m_finishedEmitted) ev->accept(); else ev->ignore();   // a failed save keeps the window
+        return;
+    }
+    std::cerr << "[viewer] " << m_subjectId.toStdString()
+        << " closed without saving: no markings written; it is redone next run\n";
+    m_finishedEmitted = true;
+    emit finished();
+    ev->accept();
 }
 
 // ---- PAGE KEYS ---------------------------------------------------------------

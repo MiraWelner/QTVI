@@ -327,8 +327,15 @@ public:
     // capture in between reads the new value, not the painted one.
     void setMarkerQuiet(Marker m, double idx) {
         m_markers[m] = idx;
+        m_markerPlaceholder[m] = false;   // a written position is a real one
         rebaseDragOrigin(m, idx);
     }
+
+    // A PLACEHOLDER BAR: the detector did not find this landmark and placed it
+    // at the centre of its search range. Drawn as a circle on the trace (the
+    // glyphs' O = placed, X = found), still draggable like any bar. setMarker
+    // clears it -- moving the bar makes it real -- so the page sets it after.
+    void setMarkerPlaceholder(Marker m, bool on) { m_markerPlaceholder[m] = on; update(); }
     double marker(Marker m) const { return m_markers[m]; }
 
     // ---- WHERE THE BAR BEING DRAGGED SAT WHEN IT WAS GRABBED -------------
@@ -623,6 +630,7 @@ private:
     std::vector<double> ecg_std;
 
     double m_markers[MarkerCount];   // all -1 until seeded (filled in the ctor)
+    bool m_markerPlaceholder[MarkerCount] = {};   // see setMarkerPlaceholder
 
     // Hz per channel (indexed by Channel); 0 = unknown -> channel not drawn.
     std::array<double, static_cast<size_t>(Channel::Count)> m_rates{};
