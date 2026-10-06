@@ -174,14 +174,9 @@ struct config_entry {
 
 
     bool use_consensus_rpeak = true;
-    // THE BEAT AFTER AN ECTOPIC ONE (baseqt_gissipheno.m, the
-    // flag_beat_after_PVC_is_ok4qt.txt test). When true -- the default, as in
-    // the Matlab, where the beat was disqualified unless that flag file
-    // existed -- a good beat right after a PVC / PAC / VT mark or a premature
-    // beat is kept in the sinus partition and in the RR series, and left out
-    // of its template's average and therefore of QT. config.csv column
-    // exclude_beat_after_ectopic; 0 / false keeps it as an ordinary beat.
     bool exclude_beat_after_ectopic = true;
+    //if you are trying to reload somebody's old markings and they don't work bc the splits are different - set this to true (in config.csv not here)
+    bool override_morphology = false;
     double notch_filter_hz = 0.0;
     double waveform_highpass_hz = 0.0;
 

@@ -775,7 +775,7 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
     }
 
     if (m_hasPPG) {
-        const FeatureMarks::ReactivePpg p = FeatureMarks::reactive_ppg(
+        const FeatureMarks::ReactivePpg p = FeatureMarks::update_ppg_markings(
             m_ppg, m_markers[PpgOnset], m_markers[PpgPeak],
             m_markers[PpgDicrotic], m_markers[PpgEnd]);
         r.ppgT50 = p.t50;

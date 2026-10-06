@@ -777,7 +777,7 @@ void TemplateViewerWindow::pushPulseToPanels(int binIdx, int templateIdx,
             // click to reskin the column and pick the new cells up, which is
             // the whole "not until I click another bar" symptom.
             const tbank::BankPulseMarkerSet& pm = slot.pulse_marks;
-            const FeatureMarks::ReactivePpg rp = FeatureMarks::reactive_ppg(
+            const FeatureMarks::ReactivePpg rp = FeatureMarks::update_ppg_markings(
                 slot.tmpl, pm.onset, pm.peak_auto, pm.dicrotic, pm.end);
             pw->setMarker(BinPlotWidget::PpgOnset, pm.onset);
             pw->setMarker(BinPlotWidget::PpgPeak, pm.peak_auto);

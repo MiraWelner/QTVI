@@ -78,8 +78,8 @@
 #include "fiducial_marker_finding\feature_marks.hpp"
 #include "template_generation\bank_structs.hpp"
 #include "fiducial_marker_finding\anchor_view.hpp"
-#include "annealing/beat_times.hpp"
-#include "annealing/record_sleep.hpp"
+#include "prep_for_peakfinding/beat_times.hpp"
+#include "prep_for_peakfinding/record_sleep.hpp"
 
 // (MarkingsCsvSection deleted. It had three values and only EcgAndPulse was
 //  ever passed -- see the note at the top of writeTemplateMarkingsCsv. With
@@ -1514,7 +1514,7 @@ inline EcgFiducials ecgFiducialsFrom(const EcgDetection& d, double sampleRate,
     // function that measures both, between the bars that bracket them.
     const bool haveP = (bars.p_begin >= 0.0 && bars.q_onset >= 0.0);
     const bool haveT = (bars.s_end >= 0.0 && bars.t_end >= 0.0);
-    const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(*d.tmpl,
+    const FeatureMarks::ReactiveEcg rx = FeatureMarks::update_t_and_p_location(*d.tmpl,
         haveP ? bars.p_begin : lm.p_begin,
         haveP ? bars.q_onset : lm.q_onset,
         haveT ? bars.s_end : lm.s_end,
@@ -2142,7 +2142,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             //  consumer was that argument, and the p_peak and
                             //  t_peak COLUMNS are glyphs -- auto only -- so the
                             //  user-bracketed pair was never printed.)
-                            const FeatureMarks::ReactiveEcg auto_s_and_t_bars_for_bracketing_tpeak = FeatureMarks::reactive_ecg(ecg, aa.p_begin[c], aa.q_onset[c], aa.s_end[c], aa.t_end[c], sampleRateHz, peakMode);
+                            const FeatureMarks::ReactiveEcg auto_s_and_t_bars_for_bracketing_tpeak = FeatureMarks::update_t_and_p_location(ecg, aa.p_begin[c], aa.q_onset[c], aa.s_end[c], aa.t_end[c], sampleRateHz, peakMode);
                             // Empty, not computed, with no trace: computeEcgFeatures on an
                             // empty vector still returns an s_idx.
                             EcgFeatures ftAuto = asl
@@ -2247,7 +2247,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                                 aa.p_begin[c] = aa.p_peak[c] = aa.q_onset[c] =
                                     aa.r_peak[c] = aa.s_end[c] = aa.t_end[c] = -1.0;
                             }
-                            const FeatureMarks::ReactiveEcg rx = FeatureMarks::reactive_ecg(
+                            const FeatureMarks::ReactiveEcg rx = FeatureMarks::update_t_and_p_location(
                                 ecg, aa.p_begin[c], aa.q_onset[c],
                                 aa.s_end[c], aa.t_end[c], sampleRateHz, peakMode);
                             emitAutoFeatPt(ecgToMs, ecg, rx.p_peak);
@@ -2306,10 +2306,10 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                         const tbank::BankPulseMarkerSet pm = pvar.ok() ? pvar.marks : pmU;
 
                         const FeatureMarks::ReactivePpg rU =
-                            FeatureMarks::reactive_ppg(pw, pm.onset,
+                            FeatureMarks::update_ppg_markings(pw, pm.onset,
                                 pm.peak_auto, pm.dicrotic, pm.end);
                         const FeatureMarks::ReactivePpg rA =
-                            FeatureMarks::reactive_ppg(pw, pm.onset_auto,
+                            FeatureMarks::update_ppg_markings(pw, pm.onset_auto,
                                 pm.peak_auto, pm.dicrotic_auto, pm.end_auto);
 
                         // ppg_peak is auto-only (markerAtX hands it out to

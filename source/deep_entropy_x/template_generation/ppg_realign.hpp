@@ -282,7 +282,8 @@ namespace ppg_realign {
         const int peak = FeatureMarks::detect_ppg_upstroke_peak(v, foot, n);
         if (peak <= foot || peak >= n) return -1.0;
 
-        return FeatureMarks::first_crossing(v, foot, peak, pct / 100.0);
+        const double target = v[foot] + (pct / 100.0) * (v[peak] - v[foot]);
+        return FeatureMarks::signal_location_at_height(v, foot, peak, target);
     }
 
     // `beats` is ONE SLOT'S cohort (slotFromRows) -- gathered from

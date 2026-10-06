@@ -25,6 +25,8 @@ namespace {
     const double Q_ONSET_WIN_S = 0.02;
     const double S_PEAK_WIN_S = 0.10;
     const double J_POINT_WIN_S = 0.10;
+    const double T_END_WIN_LO_S = 0.100;
+    const double T_END_WIN_HI_S = 0.500;
     //how deep does Q have to be for it to be found - else it is a circle and marked not found
     const double Q_MIN_DEPTH = 0.0075;
 
@@ -369,63 +371,22 @@ double FeatureMarks::find_t_begin(const std::vector<double>& v, double fs, doubl
     return std::clamp(tb, static_cast<double>(lo), static_cast<double>(ePos));
 }
 
-
 double FeatureMarks::find_t_end(const std::vector<double>& v, double fs, int r_col, double j_point,
     upsample_for_fit::TransitionCandidates* candOut, curve_fit::FitMode mode) {
     const int N = static_cast<int>(v.size());
-    if (N < 4 || r_col < 0 || r_col >= N) return -1.0;
-    auto cl = [&](int i) { return std::clamp(i, 0, N - 1); };
-    auto cld = [&](double d) { return std::clamp(d, 0.0, static_cast<double>(N - 1)); };
-
-    // ---- THE WINDOW: [J + 100 ms, J + 700 ms] (t_end_window) ---------------
-    //
-    // The ceiling is also B, the post-T baseline the fit levels to, and it is
-    // trimmed to the template's last real sample so B is never NaN padding.
-    const int lastFin = sample_extent::lastFinite(v);
-    if (lastFin < 0) return -1.0;
     int lo0 = 0, hi = 0;
     FeatureMarks::t_end_window(v, fs, r_col, j_point, lo0, hi);
-    // NOT FOUND, not J. A window too short to search used to hand back J as
-    // T end -- a substitute that looked like a measurement (QT = Q to J).
-    if (hi <= lo0 + 3) return -1.0;
-
-    // B = post-T baseline at the right edge. E = the extremum in the window, by
-    // |distance| so an inverted T behaves the same.
+    // B = post-T baseline at the ceiling.
     const double B = v[hi];
-    int ePos = lo0; double bestDist = 0.0;
+    int ePos = lo0;
+    double bestDist = 0.0;
     for (int i = lo0; i <= hi; ++i) {
         if (std::isnan(v[i])) continue;
         const double d = std::abs(v[i] - B);
         if (d > bestDist) { bestDist = d; ePos = i; }
     }
-
-    // Start the fit AT the extremum: the T crosses a near-baseline level twice,
-    // once rising and once recovering, and anchorAtFraction takes the FIRST
-    // crossing. Excluding the upslope leaves only the recovery.
-    const int lo = std::min(ePos, hi - 3);
     const double E = v[ePos];
-
-    if (std::isnan(B) || std::isnan(E)) return -1.0;
-
-    // ---- THE FIT WINDOW ENDS WHERE THE T WAVE DOES, not at the ceiling ----
-    //
-    // The ceiling above is only how far T end MAY be, and it is also B. The
-    // fits cost far more than linearly in the window (two of them, four
-    // models each, then the upsampled pass), and widening the ceiling from
-    // J + 350 to J + 700 ms made every T-end detection about ten times slower
-    // -- and detect_template_landmarks runs once per panel when a page opens.
-    // Most of that extra span is flat TP baseline after the wave has ended,
-    // which tells a fit nothing.
-    //
-    // So the window stops 80 ms after the downslope has SETTLED: the first
-    // point from which the trace stays within 5% of the apex height of B for
-    // 40 ms. 5%, not the 2% the anchor is placed at, so template noise of a
-    // few microvolts on a small T cannot keep it from ever settling; the 80 ms
-    // margin is what still puts the 2% crossing, which lies past the 5% one,
-    // well inside the window. "Stays", not "touches", so a biphasic T that crosses the baseline
-    // on its way to a second lobe keeps the second lobe. A long QT moves this
-    // point out with it, so nothing is clipped; where it never settles the
-    // window runs to the ceiling as before.
+    const int lo = std::min(ePos, hi - 3);
     int fitHi = hi;
     {
         const double band = 0.05 * std::abs(E - B);
@@ -433,22 +394,23 @@ double FeatureMarks::find_t_end(const std::vector<double>& v, double fs, int r_c
         const int margin = std::max(2, static_cast<int>(std::lround(0.080 * fs)));
         for (int i = ePos + 1; i + hold <= hi; ++i) {
             bool settled = true;
-            for (int k = i; k <= i + hold; ++k)
-                if (std::isfinite(v[k]) && std::abs(v[k] - B) > band) { settled = false; i = k; break; }
+            for (int k = i; k <= i + hold; ++k) {
+                if (std::isfinite(v[k]) && std::abs(v[k] - B) > band) {
+                    settled = false;
+                    i = k;   // resume past the sample that broke the hold
+                    break;
+                }
+            }
             if (settled) { fitHi = std::min(hi, i + margin); break; }
         }
         if (fitHi <= lo + 3) fitHi = hi;
     }
-
-    auto fit = curve_fit::selectBestFit(v, lo, fitHi);
-    const double af = curve_fit::anchorAtFraction(fit, lo, fitHi, B, E, 0.02);
-    if (!std::isfinite(af)) return -1.0;
+    const auto fit = curve_fit::selectBestFit(v, lo, fitHi);
+    const double af = curve_fit::anchorAtFraction(fit, lo, fitHi, B, E, 0.05);
     const int seed = std::clamp(static_cast<int>(std::round(af)), 0, N - 1);
     const double te = upsample_for_fit::upsample_transition_and_curve_fit(v, seed, 0.02, 40, B, lo, fitHi, candOut, mode);
-    if (!std::isfinite(te)) return -1.0;
-    return cld(te);
+    return std::clamp(te, 0.0, static_cast<double>(N - 1));
 }
-
 
 double FeatureMarks::find_p_begin(const std::vector<double>& v, double fs, int r_idx, double sgn, double pPeakIn, upsample_for_fit::TransitionCandidates* candOut, curve_fit::FitMode mode) {
     const int N = static_cast<int>(v.size());
@@ -515,147 +477,65 @@ AnchorLocator make_anchor_locator(AnchorType type, int r_col, double fs) {
 }
 
 
-// ============================================================================
-// Reactive glyph bundles -- the single definition of every bracketed glyph.
-// Pure functions of a trace + bracketing bar positions; nothing is cached, so
-// the GUI (per repaint) and the writers (per row) cannot disagree. The caller
-// decides WHICH bars to bracket with: the *_auto fields for an autodetect
-// column, the user MarkerSet for a user column.
-// ============================================================================
-
-FeatureMarks::ReactiveEcg FeatureMarks::reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_onset, double s_end, double t_end, double sampleRate,
-    curve_fit::PeakFitMode peakMode)
+FeatureMarks::ReactiveEcg FeatureMarks::update_t_and_p_location(const std::vector<double>& ecg, double p_begin, double q_onset, double s_end, double t_end, double sampleRate, curve_fit::PeakFitMode peakMode)
 {
+    //called when the tend or pbegin bars move such that the ppeak and tpeak need to be recalculated
     ReactiveEcg r;
-    if (static_cast<int>(ecg.size()) < 3) return r;
-    // Both reactive peaks are locally-polarised finders, so neither needs sgn.
-    r.p_peak = find_p_peak(ecg, p_begin, q_onset, sampleRate, peakMode,
-        &r.p_peak_cand);
+    r.p_peak = find_p_peak(ecg, p_begin, q_onset, sampleRate, peakMode, &r.p_peak_cand);
     r.t_peak = find_t_peak(ecg, s_end, t_end, peakMode, &r.t_peak_cand);
     return r;
 }
-
-FeatureMarks::ReactivePpg FeatureMarks::reactive_ppg(const std::vector<double>& ppg, double onset, double peak, double dicrotic, double end)
+FeatureMarks::ReactivePpg FeatureMarks::update_ppg_markings(const std::vector<double>& ppg, double onset, double peak, double dicrotic, double end)
 {
+    // Called when the onset, peak, dicrotic or end bars move, so that t50, t80,
+    // t80_rise, pw80 and peak2 are recalculated.
     ReactivePpg r;
-    if (static_cast<int>(ppg.size()) < 3) return r;
 
-    // THE BRACKETS ROUND, THE RESULTS DO NOT. The bars arrive sub-sample, but
-    // amplitude_crossing and crossing_at_level take an integer search grid and
-    // return an interpolated position inside it, so a bracket half a sample
-    // either way does not move the answer.
-    auto win = [](double x) {
-        return (x < 0.0) ? -1 : static_cast<int>(std::lround(x));
-        };
-    const int iOnset = win(onset), iPeak = win(peak), iEnd = win(end);
+    // The crossing search steps through whole samples, so the bars are rounded
+    // to give it a start and end column. The results are still sub-sample: the
+    // crossing is interpolated between the two samples either side of it.
+    int integer_onset = std::lround(onset);
+    int integer_peak = std::lround(peak);
+    int integer_end = std::lround(end);
 
-    if (iOnset >= 0 && iPeak > iOnset)
-        r.t50 = amplitude_crossing(ppg, iOnset, iPeak, 0.50);
-    if (iPeak >= 0 && iEnd > iPeak) {
-        r.t80 = amplitude_crossing(ppg, iPeak, iEnd, 0.80);
-        // T80_rise / PW80 at t80's OWN absolute level (see
-        // detect_ppg_fiducials for the rationale): upslope crossing of the
-        // same value. The two amplitudes come from the UNROUNDED bar positions
-        // -- a level is a measurement, not a window, and sample_at interpolates.
-        if (iOnset >= 0 && iPeak > iOnset) {
-            const double vp = sample_at(ppg, peak);
-            const double ve = sample_at(ppg, end);
-            if (std::isfinite(vp) && std::isfinite(ve)) {
-                const double target = vp + 0.80 * (ve - vp);
-                const double xr = crossing_at_level(ppg, iOnset, iPeak, target);
-                if (xr >= 0.0) {
-                    r.t80_rise = xr;
-                    if (r.t80 >= 0.0 && r.t80 > r.t80_rise) r.pw80 = r.t80 - r.t80_rise;
-                }
-            }
-        }
-    }
-    // `dicrotic` IS NOT READ by this function, and never was: every output
-    // above is bracketed by onset, peak and end. Dragging the dicrotic bar
-    // therefore changes no reactive value. Left in the signature so the call
-    // matches BinPlotWidget::reactiveGlyphs; worth revisiting separately.
-    if (iPeak >= 0 && iEnd > iPeak) {
-        const double t80 = amplitude_crossing(ppg, iPeak, iEnd, 0.80);
-        r.peak2 = detect_ppg_peak2(ppg, iPeak, t80, iEnd);
-    }
+    // Signal heights at the bars themselves (sample_at interpolates).
+    const double onset_height = sample_at(ppg, onset);
+    const double peak_height = sample_at(ppg, peak);
+    const double end_height = sample_at(ppg, end);
+
+    // t50: halfway up the rising edge.
+    const double t50_height = onset_height + 0.50 * (peak_height - onset_height);
+    r.t50 = signal_location_at_height(ppg, integer_onset, integer_peak, t50_height);
+
+    // t80 and t80_rise: the same height on both edges, so pw80 is a true width.
+    const double t80_height = peak_height + 0.80 * (end_height - peak_height);
+    r.t80 = signal_location_at_height(ppg, integer_peak, integer_end, t80_height);
+    r.t80_rise = signal_location_at_height(ppg, integer_onset, integer_peak, t80_height);
+    if (r.t80 >= 0.0 && r.t80_rise >= 0.0 && r.t80 > r.t80_rise)
+        r.pw80 = r.t80 - r.t80_rise;
+
+    r.peak2 = detect_ppg_peak2(ppg, integer_peak, r.t80, integer_end);
     return r;
 }
 
-// Position at which the trace reaches `frac` of the a-to-b amplitude.
-//
-// Returns a SUB-SAMPLE position. This used to return the nearest column, which
-// quantised T80 and P50 to whole samples -- at 256 Hz that is a 3.9 ms floor on
-// an interval whose whole clinical value is that small differences in it
-// separate groups (the T80 entropy result in Section 6.3). The bracketing
-// columns are found as before, then the crossing is interpolated between them.
-double FeatureMarks::amplitude_crossing(const std::vector<double>& v, int a, int b, double frac) {
-    const int N = static_cast<int>(v.size());
-    if (a < 0 || b < 0 || b <= a || b >= N) return -1.0;
-    const double va = v[a], vb = v[b];
-    if (std::isnan(va) || std::isnan(vb)) return -1.0;
-    const double target = va + frac * (vb - va);
-
-    // First pair of adjacent finite samples that straddles the target.
-    const bool rising = (vb >= va);
-    for (int i = a + 1; i <= b; ++i) {
-        if (std::isnan(v[i]) || std::isnan(v[i - 1])) continue;
-        const bool crossed = rising ? (v[i] >= target && v[i - 1] < target)
-            : (v[i] <= target && v[i - 1] > target);
-        if (!crossed) continue;
-        const double den = v[i] - v[i - 1];
-        const double f = (den != 0.0) ? (target - v[i - 1]) / den : 0.0;
-        return (i - 1) + std::clamp(f, 0.0, 1.0);
-    }
-    // No straddle (monotone miss, or a plateau at the target): fall back to the
-    // closest column, as before, so the caller still gets a position.
-    int best = a; double bestDiff = std::numeric_limits<double>::infinity();
-    for (int i = a; i <= b; ++i) {
-        if (std::isnan(v[i])) continue;
-        const double d = std::abs(v[i] - target);
-        if (d < bestDiff) { bestDiff = d; best = i; }
-    }
-    return static_cast<double>(best);
-}
-
-double FeatureMarks::crossing_at_level(const std::vector<double>& v, int a, int b, double target) {
-    const int N = static_cast<int>(v.size());
-    if (a < 0 || b < 0 || b <= a || b >= N) return -1.0;
-    const double va = v[a], vb = v[b];
-    if (std::isnan(va) || std::isnan(vb) || std::isnan(target)) return -1.0;
-    const bool rising = (vb >= va);
-    for (int i = a + 1; i <= b; ++i) {
-        if (std::isnan(v[i]) || std::isnan(v[i - 1])) continue;
-        const bool crossed = rising ? (v[i] >= target && v[i - 1] < target)
-            : (v[i] <= target && v[i - 1] > target);
-        if (!crossed) continue;
-        const double den = v[i] - v[i - 1];
-        const double f = (den != 0.0) ? (target - v[i - 1]) / den : 0.0;
-        return (i - 1) + std::clamp(f, 0.0, 1.0);
-    }
-    return -1.0;
-}
-
-double FeatureMarks::first_crossing(const std::vector<double>& v, int a, int b, double frac) {
+double FeatureMarks::signal_location_at_height(const std::vector<double>& v, int a, int b, double target) {
+	//for features like t50, t80, t80_rise, pw80, and peak2, find the sub-sample location of a target height between two bars. 
+    //Returns -1 if the target is not crossed between the bars.
     const int N = static_cast<int>(v.size());
     if (a < 0 || b <= a || b >= N) return -1.0;
-    const double va = v[a], vb = v[b];
-    if (std::isnan(va) || std::isnan(vb)) return -1;
-    const double target = va + frac * (vb - va);
-    const bool rising = (vb >= va);
+    if (std::isnan(v[a]) || std::isnan(v[b]) || std::isnan(target)) return -1.0;
+
+    const bool rising = v[b] >= v[a];
     for (int i = a + 1; i <= b; ++i) {
-        if (std::isnan(v[i]) || std::isnan(v[i - 1])) continue;
-        const bool crossed = rising ? (v[i] >= target && v[i - 1] < target)
-            : (v[i] <= target && v[i - 1] > target);
-        if (!crossed) continue;
-        const double den = v[i] - v[i - 1];
-        const double f = (den != 0.0) ? (target - v[i - 1]) / den : 0.0;
-        // No clamp on f: the original returned lround((i-1)+f) with f
-        // unclamped, and clamping here changed the result on beats where the
-        // straddle produced f slightly outside [0,1] -- enough to move a
-        // handful of up50 columns and shift the PPG shared width by one.
-        return (i - 1) + f;   // interpolated, not rounded
+        const double prev = v[i - 1], cur = v[i];
+        if (std::isnan(prev) || std::isnan(cur)) continue;
+
+        const bool crossed = rising ? (prev < target && cur >= target)
+            : (prev > target && cur <= target);
+        if (crossed)
+            return (i - 1) + (target - prev) / (cur - prev);
     }
-    return -1;
+    return -1.0;
 }
 
 int FeatureMarks::trough_in(const std::vector<double>& v, int lo, int hi) {
@@ -704,18 +584,163 @@ double FeatureMarks::steepest_slope_in(const std::vector<double>& v, int lo, int
 
 // ---- EVERY PULSE LANDMARK EXISTS ------------------------------------------
 //
-// The detector below, then every landmark it did not find (-1) placed at the
+// Detection first, then every landmark it did not find (-1) placed at the
 // centre of its search range and flagged in .placeholder (kPhPpg*). The peak
 // first, since the other three ranges hang off it. Only the four that are
 // drawn as bars or the peak glyph are placed; the derived points (t50, t80,
 // peak2, ...) are recomputed from these by reactive_ppg wherever they are
 // shown.
-FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters,
-    curve_fit::PeakFitMode peakMode, double measuredNotchCol)
+FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters, curve_fit::PeakFitMode peakMode, double measuredNotchCol)
 {
-    PpgFiducials g = detect_ppg_fiducials_found(v, W, ppgRate, heightMeters, peakMode, measuredNotchCol);
     const int N = static_cast<int>(v.size());
-    if (N < 1) return g;                       // no samples at all: nothing to place on
+    if (N < 1) return PpgFiducials{};          // no samples at all: nothing to place on
+
+    // ---- DETECTION ---------------------------------------------------------
+    // Immediately-invoked so its early returns end detection only; the
+    // placeholder pass below always runs.
+    PpgFiducials g = [&]() -> PpgFiducials {
+        PpgFiducials g;
+        if (N < 2) return g;                   // std::clamp(W, 2, N) needs N >= 2
+        const int Wc = std::clamp(W, 2, N);    // visible window; nothing is ever placed past Wc-1
+        // Fractional clamp, and column floor/ceil for the helpers that still need
+        // an integer search grid. Positions themselves stay fractional.
+        auto cld = [&](double x) { return std::clamp(x, 0.0, static_cast<double>(Wc - 1)); };
+        auto iFloor = [&](double x) {
+            return std::clamp(static_cast<int>(std::floor(x)), 0, Wc - 1);
+            };
+        auto iCeil = [&](double x) {
+            return std::clamp(static_cast<int>(std::ceil(x)), 0, Wc - 1);
+            };
+
+        // Skip any leading NaN run: the template's first samples sit before the
+        // first R (construction pads by `pad` seconds), so a partial pulse there
+        // can win the slope gate and drag every landmark onto the left edge.
+        int lo0 = std::max(0, sample_extent::firstFinite(v));
+        if (lo0 > Wc) lo0 = Wc;
+
+        int pkSeed = FeatureMarks::detect_ppg_upstroke_peak(v, lo0, Wc);
+        if (pkSeed < 0) {
+            // No detectable upstroke - use argmax for ppg peak
+            int best = -1; double bv = -std::numeric_limits<double>::infinity();
+            for (int i = lo0; i < Wc; ++i)
+                if (!std::isnan(v[i]) && v[i] > bv) { bv = v[i]; best = i; }
+            pkSeed = best;
+        }
+        if (pkSeed < 0) return g;              // all-NaN window: nothing to mark
+
+        const int    peakHw = upsample_for_fit::pulse_window::peakHalfwidth(ppgRate);
+        const double peakSg = upsample_for_fit::pulse_window::peakSigma(ppgRate);
+        g.peak_cand = upsample_for_fit::peakCandidates(v, pkSeed,
+            peakSg, peakHw, peakMode);
+        // SEED STANDS WHEN THE CONTEST HAS NO ANSWER, exactly as the ECG path
+        // leaves the detector's column standing. cld() on a -1 placement would
+        // clamp it to column 0, which is inside the template's leading NaN pad --
+        // see the note on refine_trough below for what that does downstream.
+        g.peak = (g.peak_cand.valid && g.peak_cand.placement >= 0.0)
+            ? cld(g.peak_cand.placement)
+            : static_cast<double>(pkSeed);
+        // The contest's own winner and placement stand; the panel colours the
+        // curve that actually placed the mark, and reports "(rejected)" only on a
+        // model the operator forced.
+        g.peak_cand.placement = g.peak;
+        if (g.peak < 3) { return g; }
+        const int    footHw = upsample_for_fit::pulse_window::footHalfwidth(ppgRate);
+        const double footSg = upsample_for_fit::pulse_window::footSigma(ppgRate);
+        auto refine_trough = [&](int seed, int searchLo,
+            upsample_for_fit::PeakCandidates& out) -> double {
+                out = upsample_for_fit::peakCandidates(v, seed,
+                    footSg, footHw, peakMode);
+                const bool fitRan = out.valid && (out.placement >= 0.0);
+                double pos = cld(std::max(
+                    fitRan ? cld(out.placement)
+                    : static_cast<double>(seed),
+                    static_cast<double>(searchLo)));
+                if (std::isnan(sample_at(v, pos))) return -1.0;
+                // The placement follows the searchLo clamp so the panel's green
+                // curve reports the column the mark is actually at; the WINNER is
+                // the contest's, untouched.
+                if (fitRan) out.placement = pos;
+                return pos;
+            };
+
+        const int coarse_seed_for_onset = trough_in(v, lo0, iFloor(g.peak) - 1);
+        g.onset = refine_trough(coarse_seed_for_onset, lo0, g.onset_cand);
+        {
+            const int seed = trough_in(v, std::min(iCeil(g.peak) + 1, Wc - 1), Wc - 1);
+            // NOT FOUND IS -1, NOT Wc - 1. The old fallback pinned the end to the
+            // LAST COLUMN OF THE ARRAY whenever no trough resolved after the peak
+            // -- and Wc is the full template length, padded far tail included, so
+            // that column sits outside the drawn extent by construction. The bar
+            // then landed past the right edge of the pulse, where the marker loop
+            // drops it: invisible and unclickable, and no amount of re-seeding
+            // could rescue it because the freshly detected value was itself out of
+            // range.
+            //
+            // -1 is the sentinel every consumer of PpgFiducials already handles,
+            // for exactly the reason the refine_trough note above gives about 0:
+            // Wc - 1 is a position, and a wrong one. An unresolvable end now reads
+            // as no mark rather than as a mark at the wall.
+            g.end = (seed >= 0) ? refine_trough(seed, lo0, g.end_cand) : -1.0;
+        }
+        {
+            const double vp = sample_at(v, g.peak);
+            const double ve = sample_at(v, g.end);
+            g.t80_rise_y = vp + 0.80 * (ve - vp);
+            g.t80 = signal_location_at_height(v, iFloor(g.peak), iCeil(g.end), g.t80_rise_y);
+        }
+        if (g.t80 < 0) g.t80 = cld(0.5 * (g.peak + g.end));
+        {
+            const bool have = (measuredNotchCol >= 0.0)
+                && (measuredNotchCol <= static_cast<double>(Wc - 1));
+            g.notch_found = have;
+            if (have) {
+                g.dicrotic = measuredNotchCol;
+                g.dn_tier = 1;
+            }
+            else {
+                // HALFWAY BETWEEN PEAK AND t80, so the circle and the bar have
+                // somewhere to sit; notch_found = false says it is not a
+                // measurement. Half the interval rather than a fixed offset:
+                // peak + 0.12 * rate is 120 ms at any heart rate and on a short
+                // cycle lands past t80, outside the interval it belongs in.
+                // -1 when t80 collapses onto the peak, leaving nothing to bisect.
+                g.dicrotic = (g.t80 > g.peak) ? cld(0.5 * (g.peak + g.t80)) : -1.0;
+                g.dn_tier = 3;
+            }
+            g.dn_confidence = std::numeric_limits<double>::quiet_NaN();
+        }
+
+        g.peak2 = detect_ppg_peak2(v, iFloor(g.dicrotic), g.t80, iFloor(g.end));
+        {
+            const double vo = sample_at(v, g.onset);
+            g.t50 = signal_location_at_height(v, iFloor(g.onset), iCeil(g.peak), vo + 0.50 * (sample_at(v, g.peak) - vo));
+        }
+        if (g.t50 < 0) g.t50 = cld(0.5 * (g.onset + g.peak));
+
+        // ---- Derivative fiducials: VPG u/v/w, APG a-f, JPG p1/p2. One call;
+        // the definitions cross-reference each other, so detect() owns the
+        // resolution order.
+        {
+            const auto d = ppg_deriv::buildDerivatives(v, ppgRate);
+            const auto fd = ppg_deriv::detect(d, iFloor(g.onset), iFloor(g.peak),
+                iFloor(g.dicrotic), iFloor(g.peak2), Wc);
+            g.u = fd.u;  g.v = fd.v;  g.w = fd.w;
+            g.a = fd.a;  g.b = fd.b;  g.c = fd.c;
+            g.d = fd.d;  g.e = fd.e;  g.f = fd.f;
+            g.p1 = fd.p1;  g.p2 = fd.p2;
+
+            // Derived indices from the same derivatives + resolved points. RI reads
+            // the original pulse amplitude at p1/p2; SI needs height (NaN => NaN).
+            const auto ix = ppg_deriv::computeIndices(v, d, fd, ppgRate, heightMeters);
+            g.ba = ix.ba;  g.ca = ix.ca;  g.da = ix.da;  g.ea = ix.ea;  g.fa = ix.fa;
+            g.agi = ix.agi;  g.ri = ix.ri;  g.si = ix.si;
+            g.foundMask = ix.foundMask;
+        }
+
+        return g;
+        }();
+
+    // ---- PLACEHOLDERS ------------------------------------------------------
     const int Wc = std::clamp(W, 1, N);
     const double first = std::clamp(static_cast<double>(std::max(0, sample_extent::firstFinite(v))),
         0.0, static_cast<double>(Wc - 1));
@@ -730,256 +755,6 @@ FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials(const std::vector<
     if (!(g.onset >= 0.0)) { g.onset = centre(first, g.peak);      g.placeholder |= kPhPpgOnset; }
     if (!(g.end >= 0.0)) { g.end = centre(g.peak, last);         g.placeholder |= kPhPpgEnd; }
     if (!(g.dicrotic >= 0.0)) { g.dicrotic = centre(g.peak, g.end);   g.placeholder |= kPhPpgDicrotic; }
-    return g;
-}
-
-FeatureMarks::PpgFiducials FeatureMarks::detect_ppg_fiducials_found(const std::vector<double>& v, int W, double ppgRate, double heightMeters,
-    curve_fit::PeakFitMode peakMode, double measuredNotchCol)
-{
-    PpgFiducials g;
-    const int N = static_cast<int>(v.size());
-    if (N < 3) { fprintf(stderr, "[ppg] bail: N=%d\n", N); return g; }
-
-    // ---- A RATE IS REQUIRED, AND IT MUST BE THIS CHANNEL'S ---------------
-    //
-    // ppgRate is not a reporting unit here: it sizes the peak and foot fit
-    // windows (which take a rate because the windows are DURATIONS), sets the
-    // Savitzky-Golay window length the notch detector's knots come from
-    // (E-5.2: nc = 25 at 256 Hz, 49 at 500 Hz), and is handed to
-    // ppg_deriv::buildDerivatives and computeIndices. A wrong rate does not
-    // mislabel a correct answer -- it searches the wrong span.
-    //
-    // NON-POSITIVE IS A BAIL, NOT A SUBSTITUTION. 0 means the channel is
-    // absent; peakHalfwidth(0) is a window of no samples, so every landmark
-    // would come back defined and wrong. An empty PpgFiducials is -1
-    // throughout, which callers read as "not detected".
-    if (!(ppgRate > 0.0)) {
-        fprintf(stderr, "[ppg] bail: non-positive rate %g\n", ppgRate);
-        return g;
-    }
-    const int Wc = std::clamp(W, 2, N);   // visible window; nothing is ever placed past Wc-1
-    // Fractional clamp, and column floor/ceil for the helpers that still need
-    // an integer search grid. Positions themselves stay fractional.
-    auto cld = [&](double x) { return std::clamp(x, 0.0, static_cast<double>(Wc - 1)); };
-    auto iFloor = [&](double x) {
-        return std::clamp(static_cast<int>(std::floor(x)), 0, Wc - 1);
-        };
-    auto iCeil = [&](double x) {
-        return std::clamp(static_cast<int>(std::ceil(x)), 0, Wc - 1);
-        };
-
-    // Skip any leading NaN run: the template's first samples sit before the
-    // first R (construction pads by `pad` seconds), so a partial pulse there
-    // can win the slope gate and drag every landmark onto the left edge.
-    int lo0 = std::max(0, sample_extent::firstFinite(v));
-    if (lo0 > Wc) lo0 = Wc;
-
-    int pkSeed = FeatureMarks::detect_ppg_upstroke_peak(v, lo0, Wc);
-    if (pkSeed < 0) {
-        // No detectable upstroke - use argmax for ppg peak
-        int best = -1; double bv = -std::numeric_limits<double>::infinity();
-        for (int i = lo0; i < Wc; ++i)
-            if (!std::isnan(v[i]) && v[i] > bv) { bv = v[i]; best = i; }
-        pkSeed = best;
-    }
-    if (pkSeed < 0) return g;              // all-NaN window: nothing to mark
-
-    // ---- THE SAME CONTEST THE ECG PEAKS RUN ----------------------------
-    //
-    // peakCandidates runs bestPeakExtremumFit -- guarded quadratic vs guarded
-    // cubic, lower BIC wins, 5-point parabola when both trip the residual
-    // guard -- and `placement` is its answer. That is exactly what an ECG peak
-    // takes (BinPlotWidget::detectedLandmarks: `if (pc.valid &&
-    // pc.placement >= 0.0) fid = pc.placement;`), so the two channels now
-    // differ only in their seed, sigma and half-width.
-    //
-    // WHAT THIS REPLACED, AND WHY IT HAD TO GO. The placement used to be
-    // draw[0].position with `winner = 0` written over the contest's choice:
-    // draw[] are UNGUARDED fits, so the pulse peak was the raw weighted
-    // quadratic's vertex whether or not it fitted, and the guard could not
-    // demote it because nothing read the guarded result. Two consequences,
-    // both visible in the focus panel: a quadratic that failed the 10%
-    // residual test still placed the mark (the "Quadratic (rejected)" in
-    // green), and the Fit-Peaks radio did nothing on a pulse.
-    //
-    // THIS MOVES DETECTED PULSE PEAKS. That is the intended effect -- a
-    // skewed pulse apex is what the cubic is for, and a misfitted one is what
-    // the 5-point fallback is for -- but stored *_auto columns and the pulse
-    // CSVs will differ from a build before this change.
-    //
-    // THE WINDOW IS A DURATION, resolved against this channel's own rate --
-    // see upsample_for_fit::pulse_window for why a fixed sample count was
-    // fitting a tenth of a pulse on one recording and half of systole on
-    // another. The focus panel resolves the same two numbers from the same
-    // helpers, so the drawn curve is still the fit that placed the mark.
-    const int    peakHw = upsample_for_fit::pulse_window::peakHalfwidth(ppgRate);
-    const double peakSg = upsample_for_fit::pulse_window::peakSigma(ppgRate);
-    g.peak_cand = upsample_for_fit::peakCandidates(v, pkSeed,
-        peakSg, peakHw, peakMode);
-    // SEED STANDS WHEN THE CONTEST HAS NO ANSWER, exactly as the ECG path
-    // leaves the detector's column standing. cld() on a -1 placement would
-    // clamp it to column 0, which is inside the template's leading NaN pad --
-    // see the note on refine_trough below for what that does downstream.
-    g.peak = (g.peak_cand.valid && g.peak_cand.placement >= 0.0)
-        ? cld(g.peak_cand.placement)
-        : static_cast<double>(pkSeed);
-    // The contest's own winner and placement stand; the panel colours the
-    // curve that actually placed the mark, and reports "(rejected)" only on a
-    // model the operator forced.
-    g.peak_cand.placement = g.peak;
-
-    // A systolic peak with no room for a foot before it is a head fragment,
-    // not a pulse. Bail rather than pile every landmark at sample 0.
-    if (g.peak < 3) { return g; }
-
-    // Foot and end of cycle: the cubic's vertex on the rising / falling
-    // shoulder. Both landmarks use one lambda: they had two, identical down to
-    // the constants, which is two places for the pulse foot's window to drift.
-    // winner = 1 names the cubic as the placing model.
-    //
-    // ---- WHY THIS RETURNS -1 AND DOES NOT CLAMP ------------------------
-    //
-    // cld() IS NOT SAFE ON A FIT RESULT. peakCandidates bails early --
-    // n < 5, seed out of range, halfWidth < 3 -- and returns a
-    // DEFAULT-CONSTRUCTED PeakCandidates: valid = false, draw[].position = -1.
-    // Running that -1 through cld() is std::clamp(-1.0, 0.0, Wc-1), which is
-    // 0.0. So a fit that never ran reported the foot AT SAMPLE 0, and sample 0
-    // is inside the leading NaN pad every template carries (construction pads
-    // `pad` seconds before the first R). That is not a cosmetic error:
-    //
-    //   onset = 0  ->  footY = sample_y(tmpl, 0) = NaN
-    //              ->  calculate_perfusion_index returns NaN for EVERY sample
-    //              ->  the whole normalized pulse trace is NaN
-    //              ->  nothing is drawn, the pulse axis falls back to its
-    //                  0..1 default, and drawFeatureGlyphs paints every
-    //                  fiducial at the axis floor
-    //
-    // -- i.e. an empty panel with a row of X's along the bottom, on a slot
-    // holding hundreds of clean beats. And it was STICKY: BankPulseMarkerSet::
-    // isUnset() tests onset < 0, so the laundered 0 counted as a real
-    // detection and the lazy re-seed in showPage never fired again.
-    //
-    // The peak never had this failure because it is validated immediately
-    // after placement (`if (g.peak < 3) return g;`). The trough path lost that
-    // guard when the two lambdas were consolidated into this one. -1 is the
-    // sentinel every consumer of PpgFiducials already handles as "not found";
-    // 0 is a position, and a wrong one.
-    //
-    // THE CONTEST HERE TOO, for the same reason as the peak above. This used
-    // to read draw[1].position -- the unguarded CUBIC -- and then write
-    // `winner = 1` over the contest's choice, so a trough was placed by the
-    // cubic whether or not the cubic fitted it, and "Cubic (rejected)" in the
-    // focus panel was a guard the detector had already ignored.
-    const int    footHw = upsample_for_fit::pulse_window::footHalfwidth(ppgRate);
-    const double footSg = upsample_for_fit::pulse_window::footSigma(ppgRate);
-    auto refine_trough = [&](int seed, int searchLo,
-        upsample_for_fit::PeakCandidates& out) -> double {
-            out = upsample_for_fit::peakCandidates(v, seed,
-                footSg, footHw, peakMode);
-            const bool fitRan = out.valid && (out.placement >= 0.0);
-            double pos = cld(std::max(
-                fitRan ? cld(out.placement)
-                : static_cast<double>(seed),
-                static_cast<double>(searchLo)));
-            if (std::isnan(sample_at(v, pos))) return -1.0;
-            // The placement follows the searchLo clamp so the panel's green
-            // curve reports the column the mark is actually at; the WINNER is
-            // the contest's, untouched.
-            if (fitRan) out.placement = pos;
-            return pos;
-        };
-
-    const int coarse_seed_for_onset = trough_in(v, lo0, iFloor(g.peak) - 1);
-    g.onset = refine_trough(coarse_seed_for_onset, lo0, g.onset_cand);
-    {
-        const int seed = trough_in(v, std::min(iCeil(g.peak) + 1, Wc - 1), Wc - 1);
-        // NOT FOUND IS -1, NOT Wc - 1. The old fallback pinned the end to the
-        // LAST COLUMN OF THE ARRAY whenever no trough resolved after the peak
-        // -- and Wc is the full template length, padded far tail included, so
-        // that column sits outside the drawn extent by construction. The bar
-        // then landed past the right edge of the pulse, where the marker loop
-        // drops it: invisible and unclickable, and no amount of re-seeding
-        // could rescue it because the freshly detected value was itself out of
-        // range.
-        //
-        // -1 is the sentinel every consumer of PpgFiducials already handles,
-        // for exactly the reason the refine_trough note above gives about 0:
-        // Wc - 1 is a position, and a wrong one. An unresolvable end now reads
-        // as no mark rather than as a mark at the wall.
-        g.end = (seed >= 0) ? refine_trough(seed, lo0, g.end_cand) : -1.0;
-    }
-    // ---- THE DICROTIC NOTCH: READ, NOT DETECTED ------------------------
-    //
-    // measuredNotchCol comes from the E-5 windowed pass over the continuous
-    // recording -- see the declaration. NOTHING HERE DETECTS A NOTCH, and
-    // nothing may: E-5 has no procedure for finding one on a ~1 s template,
-    // and it states that single-pulse operation is not validated by the source
-    // and must not be assumed equivalent. The windowed pass measures a notch
-    // per cardiac cycle on the signal; the median over a template's member
-    // beats is what arrives here.
-    //
-    // t80 IS COMPUTED FIRST so the no-notch fallback can be placed relative to
-    // it. It needs only the peak and the end, both resolved above. peak2 still
-    // runs after the notch, since it searches from it.
-    g.t80 = amplitude_crossing(v, iFloor(g.peak), iCeil(g.end), 0.80);
-    if (g.t80 < 0) g.t80 = cld(0.5 * (g.peak + g.end));
-    {
-        const bool have = (measuredNotchCol >= 0.0)
-            && (measuredNotchCol <= static_cast<double>(Wc - 1));
-        g.notch_found = have;
-        if (have) {
-            g.dicrotic = measuredNotchCol;
-            g.dn_tier = 1;
-        }
-        else {
-            // HALFWAY BETWEEN PEAK AND t80, so the circle and the bar have
-            // somewhere to sit; notch_found = false says it is not a
-            // measurement. Half the interval rather than a fixed offset:
-            // peak + 0.12 * rate is 120 ms at any heart rate and on a short
-            // cycle lands past t80, outside the interval it belongs in.
-            // -1 when t80 collapses onto the peak, leaving nothing to bisect.
-            g.dicrotic = (g.t80 > g.peak) ? cld(0.5 * (g.peak + g.t80)) : -1.0;
-            g.dn_tier = 3;
-        }
-        g.dn_confidence = std::numeric_limits<double>::quiet_NaN();
-    }
-
-    g.peak2 = detect_ppg_peak2(v, iFloor(g.dicrotic), g.t80, iFloor(g.end));
-    {
-        const double vp = sample_at(v, g.peak);
-        const double ve = sample_at(v, g.end);
-        if (std::isfinite(vp) && std::isfinite(ve)) {
-            g.t80_rise_y = vp + 0.80 * (ve - vp);   // == t80's own amplitude
-            const double xr = crossing_at_level(v, iFloor(g.onset), iCeil(g.peak), g.t80_rise_y);
-            if (xr >= 0.0) {
-                g.t80_rise = xr;
-                if (g.t80 >= 0.0 && g.t80 > g.t80_rise) g.pw80 = g.t80 - g.t80_rise;
-            }
-        }
-    }
-    g.t50 = amplitude_crossing(v, iFloor(g.onset), iCeil(g.peak), 0.50);
-    if (g.t50 < 0) g.t50 = cld(0.5 * (g.onset + g.peak));
-
-    // ---- Derivative fiducials: VPG u/v/w, APG a-f, JPG p1/p2. One call;
-    // the definitions cross-reference each other, so detect() owns the
-    // resolution order.
-    {
-        const auto d = ppg_deriv::buildDerivatives(v, ppgRate);
-        const auto fd = ppg_deriv::detect(d, iFloor(g.onset), iFloor(g.peak),
-            iFloor(g.dicrotic), iFloor(g.peak2), Wc);
-        g.u = fd.u;  g.v = fd.v;  g.w = fd.w;
-        g.a = fd.a;  g.b = fd.b;  g.c = fd.c;
-        g.d = fd.d;  g.e = fd.e;  g.f = fd.f;
-        g.p1 = fd.p1;  g.p2 = fd.p2;
-
-        // Derived indices from the same derivatives + resolved points. RI reads
-        // the original pulse amplitude at p1/p2; SI needs height (NaN => NaN).
-        const auto ix = ppg_deriv::computeIndices(v, d, fd, ppgRate, heightMeters);
-        g.ba = ix.ba;  g.ca = ix.ca;  g.da = ix.da;  g.ea = ix.ea;  g.fa = ix.fa;
-        g.agi = ix.agi;  g.ri = ix.ri;  g.si = ix.si;
-        g.foundMask = ix.foundMask;
-    }
-
     return g;
 }
 

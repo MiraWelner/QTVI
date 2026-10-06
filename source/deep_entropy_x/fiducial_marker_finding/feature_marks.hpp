@@ -71,9 +71,9 @@ public:
         upsample_for_fit::PeakCandidates p_peak_cand;
     };
     struct ReactivePpg { double t50 = -1.0, t80 = -1.0, t80_rise = -1.0, pw80 = -1.0, peak2 = -1.0; };
-    static ReactiveEcg reactive_ecg(const std::vector<double>& ecg, double p_begin, double q_onset, double s_end, double t_end, double sampleRate,
+    static ReactiveEcg update_t_and_p_location(const std::vector<double>& ecg, double p_begin, double q_onset, double s_end, double t_end, double sampleRate,
         curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
-    static ReactivePpg reactive_ppg(const std::vector<double>& ppg, double onset, double peak, double dicrotic, double end);
+    static ReactivePpg update_ppg_markings(const std::vector<double>& ppg, double onset, double peak, double dicrotic, double end);
 
     // ---- ECG LANDMARK FINDERS ---------------------------------------------
     //
@@ -222,43 +222,10 @@ public:
 
     //find all fiducial markers for PPG
 
-    // heightMeters is the subject height from the demographics record, used
-    // only for the stiffness index SI. Absent (default NaN) => SI is left NaN.
-    //
-    // NO sgn: a pulse waveform has a physical sign, so there is no polarity
-    // question to answer. Same for the arterial channels.
-    //
-    // peakMode IS THE ECG'S peakMode, threaded for the same reason every ECG
-    // finder takes one: the systolic peak, the foot and the end are placed by
-    // upsample_for_fit::peakCandidates, which is the same guarded contest the
-    // ECG peaks run, so the Fit-Peaks radio has to reach it or the pulse is
-    // the one channel the control silently does not apply to.
-    // measuredNotchCol: THE DICROTIC NOTCH, ALREADY MEASURED, in this
-    // waveform's own columns (time_bin::ppg_notch_col). This function does NOT
-    // detect a notch and must not: E-5 has no procedure for finding one on a
-    // ~1 s template, and it states that single-pulse operation is not
-    // validated by the source and must not be assumed equivalent. The windowed
-    // pass measures one per cardiac cycle on the continuous signal; the median
-    // over a template's member beats is what arrives here.
-    //
-    // < 0 means no member beat had one. The notch is then placed HALFWAY
-    // BETWEEN THE PEAK AND t80 with notch_found = false, so the glyph draws a
-    // circle there rather than an X and the bar has somewhere to be dragged
-    // from. That is a placeholder, and notch_found is how every reader already
-    // tells it from a measurement.
-    // The detector as written: -1 where it found nothing. detect_ppg_fiducials
-    // calls it and fills those with placeholders; nothing else should.
-    static PpgFiducials detect_ppg_fiducials_found(const std::vector<double>& v, int W, double ppgRate, double heightMeters = NAN,
-        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
-        double measuredNotchCol = -1.0);
-    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters = NAN,
-        curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,
-        double measuredNotchCol = -1.0);
-    static double amplitude_crossing(const std::vector<double>& v, int a, int b, double frac);
-    static double crossing_at_level(const std::vector<double>& v, int a, int b, double target);
+    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters = NAN, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,double measuredNotchCol = -1.0);
+    static double signal_location_at_height(const std::vector<double>& v, int a, int b, double target);
     static int trough_in(const std::vector<double>& v, int lo, int hi);
     static double steepest_slope_in(const std::vector<double>& v, int lo, int hi);
-    static double first_crossing(const std::vector<double>& v, int a, int b, double frac);
     static int detect_ppg_upstroke_peak(const std::vector<double>& v, int lo = 0, int hi = -1);
     static int detect_ppg_onset(const std::vector<double>& pulse);
     // ppgRate IS REQUIRED, no default: the fit window is a DURATION

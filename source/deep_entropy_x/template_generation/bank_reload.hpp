@@ -25,6 +25,14 @@
 // build that predates the fingerprint, which therefore repartitions once and
 // reloads exactly from then on.
 //
+// UNLESS override_morphology IS TRUE (config.csv). Then gates 1 and 2 are
+// skipped: every bin the archive holds is reloaded, reviewed or not, same
+// slicing or not. A changed slicing means a member row may now name a
+// different heartbeat, or none -- rows past this run's kept beats are dropped
+// and counted, and the report says how many bins were taken past which gate.
+// The slot check below still applies: a split naming a slot the fresh bank
+// does not have cannot be written into it.
+//
 // WHOLE BINS. The four channels of a bin are faces of ONE joint partition
 // (template i of each channel is group i), so a bin is reloaded on every
 // channel or on none: a bin whose ECG came back from the archive and whose
@@ -228,6 +236,12 @@ namespace bank_reload {
         size_t bins_no_verdict = 0;      // nobody ruled on it: repartitioned
         size_t bins_slicing_changed = 0; // fingerprint differs or is absent
         size_t bins_slot_mismatch = 0;   // fresh bank too small on a channel
+
+        // ---- override_morphology: reloaded PAST a gate ----------------------
+        bool override_gates = false;
+        size_t bins_override_no_verdict = 0; // reloaded although nobody ruled on it
+        size_t bins_override_slicing = 0;    // reloaded although slicing changed / unknown
+        size_t members_dropped = 0;          // rows past this run's kept beats
     };
 
     namespace detail {
@@ -275,16 +289,22 @@ namespace bank_reload {
         // the same reason: the build rewrites both.
         std::vector<uint64_t> prior_fp;
 
+        // config.csv override_morphology: reload every bin, skipping the
+        // verdict and slicing gates. Set by readSplit.
+        bool override_gates = false;
+
         // True when there is something to apply. A first run has no archive and
         // this is false, which is the normal case and not an error.
         bool usable() const { return rep.prior_read && !rep.too_old; }
     };
 
     // Call BEFORE buildTemplatesAndBeatsFast.
-    inline SplitArchive readSplit(const std::string& priorPath) {
+    inline SplitArchive readSplit(const std::string& priorPath, bool overrideGates = false) {
         SplitArchive out;
         SplitReport& rep = out.rep;
         rep.prior_path = priorPath;
+        out.override_gates = overrideGates;
+        rep.override_gates = overrideGates;
 
         std::error_code ec;
         rep.prior_present = std::filesystem::exists(priorPath, ec) && !ec;
@@ -358,10 +378,14 @@ namespace bank_reload {
     //
     // bankOf(bin, c) is the fresh bank for channel c (0-2 ECG, 3 pulse), or
     // null where the build has none. freshFp is this run's fingerprint per bin
-    // (slicing::hashBin), in the same bin order as the archive.
+    // (slicing::hashBin), in the same bin order as the archive. rowsOf(bin, c)
+    // is how many kept-beat rows channel c has in this run; with
+    // override_morphology on and the slicing changed, members at or past it
+    // are dropped. Without rowsOf nothing is dropped.
     inline SplitReport applySplit(SplitArchive& arch, size_t nBins,
         const std::function<tbank::TemplateBank* (size_t, int)>& bankOf,
-        const std::vector<uint64_t>& freshFp)
+        const std::vector<uint64_t>& freshFp,
+        const std::function<size_t(size_t, int)>& rowsOf = nullptr)
     {
         SplitReport rep = arch.rep;
         // Counts are this application's, not carried from an earlier one.
@@ -369,6 +393,8 @@ namespace bank_reload {
         rep.beats_restored = 0;
         rep.bins_with_prior = rep.bins_reloaded = rep.bins_no_verdict = 0;
         rep.bins_slicing_changed = rep.bins_slot_mismatch = 0;
+        rep.bins_override_no_verdict = rep.bins_override_slicing = rep.members_dropped = 0;
+        rep.override_gates = arch.override_gates;
         if (!arch.usable()) { arch.rep = rep; return rep; }
         const auto& blocks = arch.blocks;
 
@@ -394,16 +420,23 @@ namespace bank_reload {
         }
 
         // ---- THE GATES, PER BIN, ALL CHANNELS OR NONE ---------------------
-        std::vector<char> take(nBins, 0);
+        std::vector<char> take(nBins, 0), slicingChanged(nBins, 0);
         for (size_t b = 0; b < nBins; ++b) {
             if (!hasPrior[b]) continue;
             ++rep.bins_with_prior;
-            if (!verdict[b]) { ++rep.bins_no_verdict; continue; }
+            if (!verdict[b]) {
+                if (!arch.override_gates) { ++rep.bins_no_verdict; continue; }
+                ++rep.bins_override_no_verdict;          // taken anyway
+            }
 
             const bool sameSlicing = rep.fp_read
                 && b < arch.prior_fp.size() && b < freshFp.size()
                 && arch.prior_fp[b] != 0 && arch.prior_fp[b] == freshFp[b];
-            if (!sameSlicing) { ++rep.bins_slicing_changed; continue; }
+            if (!sameSlicing) {
+                if (!arch.override_gates) { ++rep.bins_slicing_changed; continue; }
+                ++rep.bins_override_slicing;             // taken anyway
+                slicingChanged[b] = 1;
+            }
 
             bool slotsOk = true;
             for (int c = 0; c < 4 && slotsOk; ++c) {
@@ -444,6 +477,20 @@ namespace bank_reload {
 
                 tp.members = blk.members[k];
                 tp.members_clean = blk.members_clean[k];
+                // OVERRIDE ONLY: with the slicing changed, a saved row can lie
+                // past this run's kept beats. Such a row names no beat at all,
+                // so it is dropped rather than left for a consumer to index.
+                if (slicingChanged[rec.bin] && rowsOf) {
+                    const size_t nRows = rowsOf(rec.bin, c);
+                    auto prune = [&](std::vector<uint32_t>& v) {
+                        const size_t before = v.size();
+                        v.erase(std::remove_if(v.begin(), v.end(),
+                            [nRows](uint32_t m) { return m >= nRows; }), v.end());
+                        return before - v.size();
+                        };
+                    rep.members_dropped += prune(tp.members);
+                    prune(tp.members_clean);
+                }
                 rep.beats_restored += tp.members.size();
 
                 // BOTH TRIMMED TO THE SAME LENGTH, or neither. The waveform
@@ -524,6 +571,23 @@ namespace bank_reload {
                 " would not parse: %s\n"
                 "  [split-reload]     the fresh repartition will NOT match it.\n",
                 rep.prior_path.c_str(), rep.error.c_str());
+            return;
+        }
+        if (rep.override_gates) {
+            // SAID LOUDLY: this run kept partitions the gates would have
+            // thrown away, so the counts of what was taken past each gate are
+            // the part anybody reading the log needs.
+            std::fprintf(out,
+                "  [split-reload] override_morphology=TRUE -- %s: %zu of %zu bin(s)"
+                " reloaded (%zu template(s), %zu beat assignment(s)).\n"
+                "  [split-reload]     reloaded past the gates: %zu with no operator"
+                " verdict, %zu with changed or unverifiable slicing; %zu member row(s)"
+                " past this run's kept beats dropped; %zu bin(s) left fresh (too few"
+                " fresh slots)\n",
+                rep.prior_path.c_str(), rep.bins_reloaded, rep.bins_with_prior,
+                rep.templates_restored, rep.beats_restored,
+                rep.bins_override_no_verdict, rep.bins_override_slicing,
+                rep.members_dropped, rep.bins_slot_mismatch);
             return;
         }
         if (!rep.fp_read) {

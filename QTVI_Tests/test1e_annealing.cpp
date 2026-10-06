@@ -29,7 +29,7 @@
 // test1b) writes the noise marks.
 // ============================================================================
 #include "pch.h"
-#include "annealing/anneal_handler.hpp"                  // anneal_one_file
+#include "prep_for_peakfinding/anneal_handler.hpp"                  // anneal_one_file
 #include "peak_finding/peakfinding_io.hpp"               // read_input_binfile
 #include "noise_marking_gui/user_annotation_handler.h"   // annotation_handler (marks writer)
 

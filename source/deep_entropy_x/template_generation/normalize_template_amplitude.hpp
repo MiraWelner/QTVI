@@ -180,7 +180,7 @@ namespace normalize_features {
                 return { &b.ppgTemplate, -1.0, -1.0, uint8_t(2), -1.0, -1.0, -1.0 };
             const tbank::template_of_all_signals& ps = b.ppg_bank.templates[t];
             const tbank::BankPulseMarkerSet& pm = ps.pulse_marks;
-            const FeatureMarks::ReactivePpg rp = FeatureMarks::reactive_ppg(
+            const FeatureMarks::ReactivePpg rp = FeatureMarks::update_ppg_markings(
                 ps.tmpl, pm.onset, pm.peak_auto, pm.dicrotic, pm.end);
             const uint8_t issue = ps.badPulseMarked() ? uint8_t(1) : b.bad_ppg;
             return { &ps.tmpl, pm.onset, pm.peak_auto, issue,

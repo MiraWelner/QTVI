@@ -1396,7 +1396,7 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
             // BankPulseMarkerSet -- markerAtX hands none of them out, and all
             // of them come back from reactive_ppg bracketed by the bars plus
             // the detector's own systolic peak.
-            const FeatureMarks::ReactivePpg rp = FeatureMarks::reactive_ppg(
+            const FeatureMarks::ReactivePpg rp = FeatureMarks::update_ppg_markings(
                 ps.tmpl, pm.onset, pm.peak_auto, pm.dicrotic, pm.end);
             pw->setMarker(BinPlotWidget::PpgOnset, pm.onset);
             pw->setMarker(BinPlotWidget::PpgPeak, pm.peak_auto);
@@ -1443,7 +1443,7 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
     // with its own R column for the alignment on screen.
     const SlotView svDraw = slotView(b, channel, templateIdx, currentGridAnchor());
     const std::vector<double>& drawnEcg = svDraw.valid ? *svDraw.tmpl : tp.tmpl;
-    const FeatureMarks::ReactiveEcg reBank = FeatureMarks::reactive_ecg(
+    const FeatureMarks::ReactiveEcg reBank = FeatureMarks::update_t_and_p_location(
         drawnEcg, mk.p_begin, mk.q_onset, mk.s_end, mk.t_end, m_sampleRate);
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
     pw->setMarker(BinPlotWidget::EcgPPeak, reBank.p_peak);

@@ -13,6 +13,7 @@
  *        -pthread on GCC/Clang.
  */
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -158,12 +159,57 @@ namespace filterutils {
         return output;
     }
 
+    // ---- Exact rate ratio -------------------------------------------------
+    //
+    // P/Q = targetRate / sourceRate, reduced, EXACT. Rates need not be whole
+    // numbers: both are scaled by the smallest k in [1, kMaxRateScale] that
+    // makes them integers (62.5 -> 500 Hz becomes 125 -> 1000, i.e. 8/1).
+    //
+    // A rate that is not a multiple of 1/kMaxRateScale Hz is REJECTED, not
+    // rounded. This used to be (int)rate, which silently turned 62.5 Hz into
+    // 62 Hz: the output was then labelled targetRate but carried
+    // 62/62.5 = 0.992 of the time per sample -- 7.1 s of drift per 15-minute
+    // bin on CHAOS resp. A wrong ratio stretches every sample in time, so it
+    // has to be loud.
+    inline constexpr int kMaxRateScale = 1000;
+
+    inline long long gcd_ll(long long a, long long b) {
+        a = a < 0 ? -a : a; b = b < 0 ? -b : b;
+        while (b) { long long t = b; b = a % b; a = t; }
+        return a;
+    }
+
+    inline void rational_rate_ratio(double sourceRate, double targetRate, int& P, int& Q) {
+        if (!(sourceRate > 0.0) || !(targetRate > 0.0))
+            throw std::runtime_error("resampling rates must be positive (source "
+                + std::to_string(sourceRate) + " Hz, target " + std::to_string(targetRate) + " Hz)");
+        auto asInteger = [](double v, long long& out) {
+            const double r = std::round(v);
+            if (std::fabs(v - r) > 1e-9 * std::max(1.0, std::fabs(v))) return false;
+            out = static_cast<long long>(r);
+            return true;
+            };
+        for (int k = 1; k <= kMaxRateScale; ++k) {
+            long long S = 0, T = 0;
+            if (!asInteger(sourceRate * k, S) || !asInteger(targetRate * k, T)) continue;
+            const long long g = gcd_ll(T, S);
+            const long long p = T / g, q = S / g;
+            if (p > INT_MAX || q > INT_MAX) break;
+            P = static_cast<int>(p);
+            Q = static_cast<int>(q);
+            return;
+        }
+        throw std::runtime_error("no exact resampling ratio for " + std::to_string(sourceRate)
+            + " -> " + std::to_string(targetRate) + " Hz: a rate must be a multiple of 1/"
+            + std::to_string(kMaxRateScale) + " Hz. Refusing to round it, which would shift "
+            "every sample in time.");
+    }
+
     inline std::vector<double> upsample(const std::vector<double>& input, double sourceRate, double targetRate) {
         if (input.empty()) return {};
         if (sourceRate == targetRate) return input;
-        int gcd = greatest_common_divisor((int)targetRate, (int)sourceRate);
-        int P = (int)targetRate / gcd;
-        int Q = (int)sourceRate / gcd;
+        int P = 0, Q = 0;
+        rational_rate_ratio(sourceRate, targetRate, P, Q);
         if (P > 1000 || Q > 1000) {
             throw std::runtime_error(
                 "Resampling ratio " + std::to_string(P) + "/" +
@@ -177,8 +223,8 @@ namespace filterutils {
     // inBase[-k] = inPtr[baseInput+filterCenter-k], so the effective input-side
     // center offset is filterCenter input samples -> filterCenter*P/Q output samples.
     inline double group_delay_out_samples(double sourceRate, double targetRate) {
-        int gcd = greatest_common_divisor((int)targetRate, (int)sourceRate);
-        int P = (int)targetRate / gcd, Q = (int)sourceRate / gcd;
+        int P = 0, Q = 0;
+        rational_rate_ratio(sourceRate, targetRate, P, Q);
         int halfLobes = std::max(16, std::max(P, Q) / 2);
         int maxPQ = std::max(P, Q);
         int filterCenter = halfLobes * maxPQ / P;

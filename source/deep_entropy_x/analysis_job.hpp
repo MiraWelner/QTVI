@@ -25,10 +25,10 @@
 #include "template_generation/template_io.hpp"
 #include "template_generation/envelope_report.hpp"
 #include "template_generation/beat_substitute.hpp"
-#include "annealing/beat_times.hpp"
-#include "annealing/record_sleep.hpp"
+#include "prep_for_peakfinding/beat_times.hpp"
+#include "prep_for_peakfinding/record_sleep.hpp"
 
-#include "annealing/anneal_handler.hpp"
+#include "prep_for_peakfinding/anneal_handler.hpp"
 #include "config_file_handling/config.hpp"
 #include "fiducial_marker_finding/alignment.hpp"
 #include "fiducial_marker_finding/ppg_derivative.hpp"
@@ -325,7 +325,8 @@ namespace analysis_job {
         // rewritten by the build below, inside morphology_csv::writeTemplatesBin,
         // so reading it afterwards would read this run's own output.
         const std::filesystem::path splitPath = std::filesystem::path(cfg.template_path) / (stem + "_templates.bin");
-        bank_reload::SplitArchive priorSplit = bank_reload::readSplit(splitPath.string());
+        bank_reload::SplitArchive priorSplit = bank_reload::readSplit(splitPath.string(),
+            cfg.override_morphology);   // config.csv: reload every bin, skipping the gates
 
         // The prior split is applied INSIDE the build, before the archive is
         // rewritten -- see bank_reload.hpp for the two gates and why.

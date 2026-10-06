@@ -25,7 +25,7 @@
 #include "template_generation/template_io.hpp"
 #include "template_generation/bank_reload.hpp"
 #include "template_generation/nsvt_detect.hpp"
-#include "annealing/beat_times.hpp"   // Splice: bin position -> recording sample
+#include "prep_for_peakfinding/beat_times.hpp"   // Splice: bin position -> recording sample
 #include "noise_marking_gui/annotation_types.hpp"
 
 #include "noise_marking_gui/user_annotation_handler.h"
@@ -721,7 +721,14 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 auto it = result[b].bank_by_channel.find(kChanKeys[c]);
                 return (it == result[b].bank_by_channel.end()) ? nullptr : &it->second.bank;
             },
-            slicingFp);
+            slicingFp,
+            // Kept-beat rows per (bin, channel): the rows members index. Only
+            // used with override_morphology, to drop rows that no longer exist.
+            [&result](size_t b, int c) -> size_t {
+                if (b >= result.size() || c < 0 || c > 3) return 0;
+                auto it = result[b].kept_beats_by_channel.find(kChanKeys[c]);
+                return (it == result[b].kept_beats_by_channel.end()) ? 0 : it->second.size();
+            });
     }
 
     //write templates.csv, beats.bin, templates.bin, and bins.csv.

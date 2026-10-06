@@ -304,6 +304,7 @@ inline bool load_config(int dataType, config_entry& out) {
         out.output_path = get_value_from_config("output_folder");
         out.use_consensus_rpeak = parseBool(get_value_from_config("use_consensus_rpeak"), true);
         out.exclude_beat_after_ectopic = parseBool(get_value_from_config("exclude_beat_after_ectopic"), true);
+        out.override_morphology = parseBool(get_value_from_config("override_morphology"), false);
         out.notch_filter_hz = stod_or_default(get_value_from_config("notch_filter_hz"), 0.0); //the spec limits notch filter to 0 (none) 50, or 60
         if (out.notch_filter_hz != 0.0 &&
             out.notch_filter_hz != 50.0 &&

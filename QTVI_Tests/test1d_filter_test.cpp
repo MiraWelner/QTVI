@@ -191,8 +191,8 @@ static Ecg readEcg1(const fs::path& p) {
     return out;
 }
 
-static const fs::path kCleanBin = fs::path(TESTS_DATA_DIR) / "filters" / "3010422_20110321_4h25m-4h35m_clean.bin";
-static const fs::path kNoisyBin = fs::path(TESTS_DATA_DIR) / "filters" / "3010422_20110321_4h25m-4h35m_60hz.bin";
+static const fs::path kCleanBin = fs::path(TESTS_DATA_DIR) / "filters" / "3010422_20110321_4h25m-4h35m_baseline_test.bin";
+static const fs::path kNoisyBin = fs::path(TESTS_DATA_DIR) / "filters" / "3010422_20110321_4h25m-4h35m_notch_test.bin";
 static constexpr double kHighPassHz = 0.5, kNotchHz = 60.0, kWindowSec = 30.0;
 // What the fixture HAS, measured whatever the filter is set to: the notch is
 // the thing under test, so it must not also decide where we look.

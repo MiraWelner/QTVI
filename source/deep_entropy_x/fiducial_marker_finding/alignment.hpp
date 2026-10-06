@@ -1073,7 +1073,7 @@ namespace alignment {
         L.foot = FeatureMarks::trough_in(beat, std::max(0, L.peak - rr / 2), L.peak);
         if (L.foot < 0) return L;
 
-        const double u = FeatureMarks::first_crossing(beat, L.foot, L.peak, 0.50);
+        const double u = FeatureMarks::signal_location_at_height(beat, L.foot, L.peak, beat[L.foot] + 0.50 * (beat[L.peak] - beat[L.foot]));
         if (u >= 0.0) L.up50 = u;
         const double m = FeatureMarks::steepest_slope_in(beat, L.foot, L.peak);
         if (m >= 0.0) L.maxUpslope = m;

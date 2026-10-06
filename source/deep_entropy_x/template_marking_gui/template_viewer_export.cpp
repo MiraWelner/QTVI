@@ -654,10 +654,10 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
                 ? b.slotMarks(c, 0, anchor)
                 : b.userMarks(c, 0, anchor);
             const std::vector<double>& ecgA = b.chFor(c, anchor).ecgTemplate_raw;
-            const FeatureMarks::ReactiveEcg rxA = FeatureMarks::reactive_ecg(
+            const FeatureMarks::ReactiveEcg rxA = FeatureMarks::update_t_and_p_location(
                 ecgA, (int)std::lround(aa.p_begin), (int)std::lround(aa.q_onset),
                 (int)std::lround(aa.s_end), (int)std::lround(aa.t_end), m_sampleRate);
-            const FeatureMarks::ReactiveEcg rxU = FeatureMarks::reactive_ecg(ecgA, umk.p_begin, umk.q_onset, umk.s_end, umk.t_end, m_sampleRate);
+            const FeatureMarks::ReactiveEcg rxU = FeatureMarks::update_t_and_p_location(ecgA, umk.p_begin, umk.q_onset, umk.s_end, umk.t_end, m_sampleRate);
 
             // Same placement the glyph and the focus panel draw: aa.r_peak is
             // a seed, placeEcgPeak turns it into a position. On a failed fit
@@ -693,7 +693,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
         // autodetect column brackets with the *_auto bars and the user column
         // with the user bars, both through the same FeatureMarks::reactive_ppg
         // the on-screen glyph uses -- so what is plotted is what is exported.
-        const FeatureMarks::ReactivePpg rxPpgAuto = FeatureMarks::reactive_ppg(
+        const FeatureMarks::ReactivePpg rxPpgAuto = FeatureMarks::update_ppg_markings(
             b.ppgTemplate, b.ppg_onset_auto, b.ppg_peak_auto, b.ppg_dicrotic_auto, b.ppg_end_auto);
         // ---- THE USER HALF NOW COMES FROM A SLOT ------------------------
         //
@@ -713,7 +713,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             ? b.ppg_bank.templates[0].pulse_marks : kNoPulseMarks;
         const std::vector<double>& ppgUserTrace = havePpgSlot
             ? b.ppg_bank.templates[0].tmpl : b.ppgTemplate;
-        const FeatureMarks::ReactivePpg rxPpgUser = FeatureMarks::reactive_ppg(
+        const FeatureMarks::ReactivePpg rxPpgUser = FeatureMarks::update_ppg_markings(
             ppgUserTrace, pm0.onset, pm0.peak_auto, pm0.dicrotic, pm0.end);
         // double, not int: t50/t80 are interpolated crossings and the stored
         // fields promote without loss. Rounding happens once, in emitLoc.
