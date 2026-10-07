@@ -1111,6 +1111,14 @@ tbank::BankMarkerSet TemplateViewerWindow::barsForPanel(const BinPlotWidget* pw,
         };
     const auto pick = [&](int marker, double detected) -> double {
         if (m_forceAlign && !anchor_view::showsBar(a, marker)) return -1.0;
+        // WHERE THE BAR WAS AT THE LAST SAVE, in this alignment's columns:
+        // exact, moved or not. First, so a reload is not shifted by an edit's
+        // translation through rebuilt alignment frames. A bar moved this
+        // session has its saved position cleared, so the edit below wins.
+        {
+            const double saved = b.savedBar(lead, slot, a, marker);
+            if (saved >= 0.0) return saved;
+        }
         if (ownBars) {
             const double edit = field(b.slotMarks(lead, slot, a), marker);
             if (edit >= 0.0) return edit;
@@ -1122,7 +1130,7 @@ tbank::BankMarkerSet TemplateViewerWindow::barsForPanel(const BinPlotWidget* pw,
         }
         if (!lm.valid) return -1.0;
         if (lm.placeholder & phBit(marker)) ph |= phBit(marker);
-        return detected;                       // otherwise the detection
+        return detected;                       // a bar never saved: the detection
         };
     out.p_begin = pick(anchor_view::p_begin, lm.p_begin);
     out.q_onset = pick(anchor_view::q_begin, lm.q_onset);
@@ -1468,13 +1476,12 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
     // setAuto above has already run, so detectedLandmarks() is populated for
     // this bin and this alignment. r_col remains the fallback for a template
     // whose detection did not produce an R at all.
-    {
-        const FeatureMarks::TemplateLandmarks& lmR = pw->detectedLandmarks();
-        const double rFallback =
-            svDraw.valid ? static_cast<double>(svDraw.r_col) : rColR;
-        pw->setMarker(BinPlotWidget::EcgRPeak,
-            (lmR.valid && lmR.r_peak >= 0.0) ? lmR.r_peak : rFallback);
-    }
+    // R BETWEEN THE USER BARS: rPeakInBars on the drawn trace with this
+    // slot's Q-onset and S-end bars -- the function the glyph and the markings
+    // CSV use, so the three are one column. No fallback to a detected R or to
+    // r_col: with no Q-onset/S-end bar there is no R to place.
+    pw->setMarker(BinPlotWidget::EcgRPeak,
+        rPeakInBars(drawnEcg, mk.q_onset, mk.s_end, m_peakFitMode));
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
     // The bars the detector only PLACED (not found, no edit): circles.

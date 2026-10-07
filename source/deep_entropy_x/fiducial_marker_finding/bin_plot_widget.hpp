@@ -386,6 +386,11 @@ public:
         //  peaks below. It is not -- it is detected, and the snapshot holds it.)
         double ecgPPeak = -1.0;   // between the P-onset and Q-onset bars
         double ecgTPeak = -1.0;   // between the S-end and T-end bars
+        // R between the Q-onset and S-end BARS (rPeakInBars), and the Q and S
+        // peaks found from that R. Never from the detection's own brackets.
+        double ecgRPeak = -1.0;
+        double ecgQPeak = -1.0;
+        double ecgSPeak = -1.0;
         double ppgT50 = -1.0, ppgT80 = -1.0, ppgPeak2 = -1.0;
     };
     Reactive reactiveGlyphs() const;

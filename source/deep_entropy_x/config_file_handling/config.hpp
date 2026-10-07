@@ -47,6 +47,7 @@ struct config_entry {
     std::string sleep_file_extension;
     std::string input_path;
     std::string output_path;
+    std::string cgm_folder;
 
     // Per-channel native (raw) rate + target (upsample) rate, in Hz.
     double ecg_raw_rate = 0.0, ecg_upsample_rate = 0.0;
@@ -79,43 +80,19 @@ struct config_entry {
     double eog_r_raw_rate = 0.0, eog_r_upsample_rate = 0.0;
     double emg_raw_rate = 0.0, emg_upsample_rate = 0.0;
 
+	//thresholds and other parameters
     double sleepstate_length = 0.0;
     double blanking_period = 0.0;
     double threshold = 0.0;
     double bin_size_minutes = 0.0;
-    // MORPHOLOGY SPLIT THRESHOLDS, Pearson band-match scores in (0, 1].
-    // Were ecg_match_floor / ppg_match_floor. Renamed because the defaults
-    // moved off 0.0 at the same time: 0.0 was a threshold every beat cleared,
-    // so a blank cell disabled the split silently. An absent key now leaves
-    // the compiled 0.85 / 0.80 and says so on the [morphology] line.
-    //
-    // SET INDEPENDENTLY. One may be present and the other blank.
+    double cgm_bin_minutes = 60.0;
     double morph_threshold_ecg = 0.0;
     double morph_threshold_ppg = 0.0;
-    // PULSE QC CORRELATION FLOOR: a Pearson r in (0, 1] -- NOT a percent.
-    // Was ppg_fit_error_pct, an RMS error CEILING in (0, 100]. The key is
-    // renamed rather than reused deliberately: an old config.csv carrying
-    // ppg_fit_error_pct=10 would otherwise be read as a correlation floor of
-    // 10, refused as out of range, and fall back to the default silently. A
-    // missing key does the same thing, but the [pulseqc] line says so.
-    //
-    // NOT THE SAME THING as morph_threshold_ppg. Both are Pearson
-    // correlations on the pulse channel, and they answer different questions:
-    // this one whether a pulse enters its bin's template at all, that one
-    // which morphology group a beat joins.
-    double pulse_qc_corr_floor = 0.0;
-    // TUKEY FENCE MULTIPLIERS: k in a template group's outlier fences,
-    // [Q1 - k*IQR, Q3 + k*IQR], for RR length, amplitude, R location and wave
-    // score (cleanGroups, split_bins_to_templates.hpp). One for the ECG
-    // partition, one for the pulse partition. 1.5 is the standard Tukey value
-    // and the default when the config leaves it blank; larger keeps more
-    // beats (3.0 = only extreme outliers), smaller removes more.
+    double ppg_pearson_threshold = 0.0;
     double ecg_tukey_fence = 1.5;
     double ppg_tukey_fence = 1.5;
     int min_beats_template_ecg = 0;
     int min_beats_template_ppg = 0;
-
-
     double region_around_Rpeak_for_morphology_split = 0.0;
     double region_around_PPGPeak_for_morphology_split = 0.0;
 
@@ -131,7 +108,7 @@ struct config_entry {
     std::string log_path;
     std::string training_log;
     std::string vcg_output;
-
+    std::string cgm_output_path;
 
     // Different filetypes have different terms for the same type of signal,
     // If only one filetype has a given type of data (ie only bittium has accelration) then the label

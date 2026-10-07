@@ -576,8 +576,9 @@ void TemplateViewerWindow::focusEcg(BinPlotWidget* pw, time_bin& b,
                 case BinPlotWidget::EcgTEnd:
                     transCand = lm.t_end_cand;   detFid = lm.t_end;   break;
                     // Detected peaks.
-                case BinPlotWidget::EcgRPeak: detFid = lm.r_peak; break;
-                case BinPlotWidget::EcgQPeak: detFid = lm.q_peak; break;
+                // R and Q: between the user bars, as the glyph draws them.
+                case BinPlotWidget::EcgRPeak: detFid = rx.ecgRPeak; break;
+                case BinPlotWidget::EcgQPeak: detFid = rx.ecgQPeak; break;
                     // Reactive peaks: bracketed by the bars, so they come from
                     // reactiveGlyphs rather than the detection.
                 case BinPlotWidget::EcgPPeak: detFid = rx.ecgPPeak; break;

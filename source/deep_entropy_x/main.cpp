@@ -10,6 +10,7 @@
 #include "fiducial_marker_finding/parse_data_from_filename.hpp"
 #include "logging/user_mark_log.hpp"
 #include "template_marking_gui/template_viewer.hpp"
+#include "cgm/cgm_selection.hpp"
 
 #include <QtWidgets/QApplication>
 #include <QGuiApplication>
@@ -203,7 +204,6 @@ int main(int argc, char* argv[]) {
     const std::string initials = get_initials();
     cfg.log_path = cfg.output_path + "/" + initials + "_progress_logs";
     std::filesystem::create_directories(cfg.log_path);
-    std::cout << "Logging to: " << cfg.log_path << "\n";
 
     //load the bin files
     const std::vector<std::filesystem::path> binFiles = load_binfiles(cfg);
@@ -240,6 +240,7 @@ int main(int argc, char* argv[]) {
         // this is normally a no-op if the user loaded a bin file then this switches to the loaded file
         const std::filesystem::path effBin = currentBinFile.empty() ? binFs : currentBinFile;
         const std::string effStem = effBin.stem().string();
+        cgm_selection::selectAndProcessCgmFiles(cfg, effStem);
 
         // write CSV
         beatLog.flushPending();

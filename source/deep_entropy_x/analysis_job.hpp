@@ -3,8 +3,12 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -57,6 +61,12 @@ namespace analysis_job {
         SignalRates rates;           // full per-channel rate set for template pipeline
         std::filesystem::path rPeakPath;
         std::filesystem::path annealedPath;
+        // override_morphology: the R-peaks read back from the previous run's
+        // <stem>_peak_locations_all_beats.csv, per bin, in the CSV's column
+        // order (ch1 raw/squared/absval, ch2 ..., ch3 ...). Empty when none
+        // were reloaded. Kept so the squared/absval sets can be put back after
+        // augment_ecg_ppg_pairs_sqabs recomputes them.
+        std::vector<std::array<std::vector<std::size_t>, 9>> reloadedRPeaks;
         std::vector<output_binfile_data> peakResults;
         template_structs::TemplateFile tmpl;
         template_structs::BeatsFile beats;
@@ -112,6 +122,124 @@ namespace analysis_job {
     // highpass_enabled is the operator's checkbox; cfg supplies the cutoff.
     // Applied ahead of anneal_one_file, so ahead of the peak finding, the bins
     // and the templates. Nothing downstream re-filters.
+    // ---- override_morphology: THE PREVIOUS RUN'S R-PEAKS ----------------
+    //
+    // A reloaded split names its members by beat row, and a row is a heartbeat
+    // only if this run cuts the SAME heartbeats -- i.e. finds the same R-peaks.
+    // Re-detection does not guarantee that, so with override_morphology the
+    // R-peaks are read back from <stem>_peak_locations_all_beats.csv (the file
+    // the previous run wrote, read here BEFORE this run overwrites it) instead.
+    //
+    // Columns by name: ch{1,2,3}{_r, _squared_r, _absval_r}_ms_from_bin_start.
+    // Each column lists that bin's peaks in order; blank cells pad shorter
+    // columns. sample = round(ms * ecgRate / 1000) -- the exact inverse of the
+    // writer (sample / rate * 1000). The PPG columns are NOT read: they do not
+    // decide which heartbeats or templates exist, and older builds wrote them
+    // at the wrong rate.
+    //
+    // ALL OR NOTHING. A missing file, a bin-count mismatch or a peak past the
+    // end of its bin's signal reloads nothing and says so loudly.
+    inline bool reloadRPeaksFromCsv(const std::filesystem::path& path,
+        std::vector<output_binfile_data>& bins, double ecgRate,
+        std::vector<std::array<std::vector<std::size_t>, 9>>& stash)
+    {
+        static const char* const kCols[9] = {
+            "ch1_r_ms_from_bin_start", "ch1_squared_r_ms_from_bin_start", "ch1_absval_r_ms_from_bin_start",
+            "ch2_r_ms_from_bin_start", "ch2_squared_r_ms_from_bin_start", "ch2_absval_r_ms_from_bin_start",
+            "ch3_r_ms_from_bin_start", "ch3_squared_r_ms_from_bin_start", "ch3_absval_r_ms_from_bin_start" };
+        stash.clear();
+        std::ifstream f(path);
+        if (!f) {
+            std::fprintf(stderr, "  [r-reload] *** NO R-PEAK FILE *** %s -- R-peaks DETECTED, so the"
+                " reloaded split may not name the same heartbeats\n", path.string().c_str());
+            return false;
+        }
+        // Trailing empty cells are simply absent from the result; every read
+        // below is bounds-checked, so an absent cell reads as blank.
+        auto split = [](std::string line) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            std::vector<std::string> v; std::string cell; std::stringstream ss(line);
+            while (std::getline(ss, cell, ',')) v.push_back(cell);
+            return v;
+            };
+        std::string line;
+        std::getline(f, line);
+        const std::vector<std::string> head = split(line);
+        int binCol = -1, col[9];
+        for (int k = 0; k < 9; ++k) col[k] = -1;
+        for (int i = 0; i < static_cast<int>(head.size()); ++i) {
+            if (head[i] == "bin") binCol = i;
+            for (int k = 0; k < 9; ++k) if (head[i] == kCols[k]) col[k] = i;
+        }
+        if (binCol < 0 || col[0] < 0) {
+            std::fprintf(stderr, "  [r-reload] *** %s has no bin / ch1_r_ms_from_bin_start column --"
+                " R-peaks DETECTED\n", path.string().c_str());
+            return false;
+        }
+        std::vector<std::array<std::vector<std::size_t>, 9>> got(bins.size());
+        size_t maxBin = 0, rows = 0;
+        while (std::getline(f, line)) {
+            if (line.empty() || line == "\r") continue;   // split() strips a trailing \r
+            const std::vector<std::string> v = split(line);
+            if (binCol >= static_cast<int>(v.size()) || v[binCol].empty()) continue;
+            const size_t b = static_cast<size_t>(std::stoul(v[binCol]));
+            maxBin = std::max(maxBin, b);
+            ++rows;
+            if (b >= got.size()) continue;
+            for (int k = 0; k < 9; ++k) {
+                if (col[k] < 0 || col[k] >= static_cast<int>(v.size()) || v[col[k]].empty()) continue;
+                const double ms = std::stod(v[col[k]]);
+                got[b][k].push_back(static_cast<std::size_t>(std::llround(ms * ecgRate / 1000.0)));
+            }
+        }
+        if (maxBin + 1 != bins.size()) {
+            std::fprintf(stderr, "  [r-reload] *** %s has %zu bin(s), this run has %zu -- R-peaks DETECTED\n",
+                path.string().c_str(), maxBin + 1, bins.size());
+            return false;
+        }
+        for (size_t b = 0; b < bins.size(); ++b) {
+            const std::vector<double>* sig[3] = { &bins[b].ecgSignal, &bins[b].ecgSignal2, &bins[b].ecgSignal3 };
+            for (int k = 0; k < 9; ++k)
+                for (const std::size_t s : got[b][k])
+                    if (s >= sig[k / 3]->size()) {
+                        std::fprintf(stderr, "  [r-reload] *** bin %zu %s: peak at sample %zu is past the"
+                            " signal (%zu samples) -- R-peaks DETECTED\n",
+                            b, kCols[k], s, sig[k / 3]->size());
+                        return false;
+                    }
+        }
+        size_t changedBins = 0, detected = 0, reloaded = 0;
+        for (size_t b = 0; b < bins.size(); ++b) {
+            auto& d = bins[b];
+            detected += d.ch1.raw.size();
+            reloaded += got[b][0].size();
+            if (d.ch1.raw != got[b][0]) ++changedBins;
+            d.ch1.raw = got[b][0];
+            d.ch2.raw = got[b][3];
+            d.ch3.raw = got[b][6];
+            d.bad_segment = (d.ch1.raw.empty() && !d.ppgMinAmps.empty());
+        }
+        stash = std::move(got);
+        std::fprintf(stderr, "  [r-reload] override_morphology: R-peaks from %s (%zu rows): CH1 %zu peaks"
+            " reloaded vs %zu detected; %zu of %zu bin(s) differ from detection\n",
+            path.string().c_str(), rows, reloaded, detected, changedBins, bins.size());
+        return true;
+    }
+
+    // Put the reloaded squared / absval sets back after the slow stage has
+    // recomputed them, so all nine channel x method sets are the reloaded ones.
+    inline void reapplyReloadedSqAbs(std::vector<output_binfile_data>& bins,
+        const std::vector<std::array<std::vector<std::size_t>, 9>>& stash)
+    {
+        if (stash.size() != bins.size()) return;
+        for (size_t b = 0; b < bins.size(); ++b) {
+            auto& d = bins[b];
+            d.ch1.squared = stash[b][1]; d.ch1.absval = stash[b][2];
+            d.ch2.squared = stash[b][4]; d.ch2.absval = stash[b][5];
+            d.ch3.squared = stash[b][7]; d.ch3.absval = stash[b][8];
+        }
+    }
+
     inline std::optional<AnalysisJob> prepare(const config_entry& cfg, const std::filesystem::path& binPath, bool ecg1_inverted, bool ecg2_inverted, bool ecg3_inverted, bool highpass_enabled)
     {
         const std::string stem = binPath.stem().string();
@@ -239,6 +367,14 @@ namespace analysis_job {
         }
         job.peakResults = create_ecg_ppg_pairs_raw(std::move(annealedData.bins), stem, cfg, annealedData.ecg1_inverted, annealedData.ecg2_inverted, annealedData.ecg3_inverted);
 
+        // override_morphology: the previous run's R-peaks, so the reloaded
+        // split's beat rows name the same heartbeats. Read before anything
+        // slices beats, and before this run overwrites the CSV.
+        if (cfg.override_morphology)
+            reloadRPeaksFromCsv(std::filesystem::path(cfg.r_peak_data_path)
+                / (stem + "_peak_locations_all_beats.csv"),
+                job.peakResults, cfg.ecg_upsample_rate, job.reloadedRPeaks);
+
 
         // create_ecg_ppg_pairs_raw doesn't carry the arterial pass-through
         // channels, so attach them here (parallel by bin index).
@@ -306,14 +442,14 @@ namespace analysis_job {
         // A CORRELATION, NOT A PERCENT. Was ppg_fit_error_pct in (0, 100],
         // printed as 100.0 * the stored fraction; now pulse_qc_corr_floor in
         // (0, 1], printed as itself.
-        if (cfg.pulse_qc_corr_floor == 0.0) {
+        if (cfg.ppg_pearson_threshold == 0.0) {
             std::cerr << "  [pulseqc] pulse_qc_corr_floor absent from "
                 "config.csv; using default r >= "
                 << pulse_qc::corrFloor() << "\n";
         }
-        else if (!pulse_qc::setCorrFloor(cfg.pulse_qc_corr_floor)) {
+        else if (!pulse_qc::setCorrFloor(cfg.ppg_pearson_threshold)) {
             std::cerr << "  [pulseqc] REFUSED pulse_qc_corr_floor="
-                << cfg.pulse_qc_corr_floor << " -- must be in (0, 1]. "
+                << cfg.ppg_pearson_threshold << " -- must be in (0, 1]. "
                 "Keeping r >= " << pulse_qc::corrFloor() << "\n";
         }
         else {
@@ -458,6 +594,9 @@ namespace analysis_job {
 
             std::cout << "Processing Squared and Absolute Value Templates (slow) for " << job.stem << "\n";
             augment_ecg_ppg_pairs_sqabs(job.peakResults, job.fileID, job.samplingRate, job.cfg);
+            // override_morphology: the squared/absval peaks back to the reloaded ones.
+            if (!job.reloadedRPeaks.empty())
+                reapplyReloadedSqAbs(job.peakResults, job.reloadedRPeaks);
 
             // Below augment, so all 9 channel x method blocks are populated.
             // The CSV twin of this file is written from commit, once the

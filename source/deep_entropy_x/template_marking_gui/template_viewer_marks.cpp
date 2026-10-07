@@ -471,11 +471,13 @@ void TemplateViewerWindow::moveEcgMarker(int binIdx, int leadIdx,
         };
     auto set = [&](time_bin& tb, int slot, double v) {
         tbank::BankMarkerSet& m = tb.slotMarks(leadIdx, slot, owner);
+        // A bar moved this session: its reloaded saved position goes, in every
+        // alignment, so this edit is what every view and the CSV show.
         switch (marker) {
-        case BinPlotWidget::EcgPBegin: m.p_begin = v; break;
-        case BinPlotWidget::EcgQBegin: m.q_onset = v; break;
-        case BinPlotWidget::EcgSEnd:   m.s_end = v; break;
-        case BinPlotWidget::EcgTEnd:   m.t_end = v; break;
+        case BinPlotWidget::EcgPBegin: m.p_begin = v; tb.clearSavedBar(leadIdx, slot, 0); break;
+        case BinPlotWidget::EcgQBegin: m.q_onset = v; tb.clearSavedBar(leadIdx, slot, 1); break;
+        case BinPlotWidget::EcgSEnd:   m.s_end = v;   tb.clearSavedBar(leadIdx, slot, 2); break;
+        case BinPlotWidget::EcgTEnd:   m.t_end = v;   tb.clearSavedBar(leadIdx, slot, 3); break;
         }
         };
 
@@ -832,6 +834,9 @@ void TemplateViewerWindow::resetMarks() {
 
         for (int lead = 0; lead < 3; ++lead) {
             for (AnchorType a : anchor_view::anchor_array) {
+                // A RESET IS A RESET: the saved positions go too, or
+                // barsForPanel would restore them instead of the detection.
+                b.saved_bars.erase({ lead, slot, static_cast<int>(a) });
                 tbank::BankMarkerSet& m = b.slotMarks(lead, slot, a);
                 m.p_begin = -1.0;
                 m.q_onset = -1.0;

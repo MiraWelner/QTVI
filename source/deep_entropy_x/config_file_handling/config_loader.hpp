@@ -125,6 +125,9 @@ namespace config_loader_detail {
         cfg.training_log = create_subfolder("logs");
         cfg.snapshot_path = create_subfolder("snapshot_path");
         cfg.vcg_output = create_subfolder("vcg_output");
+        if (cfg.dataset_type == "BITTIUM" && !cfg.cgm_folder.empty()) {
+            cfg.cgm_output_path = create_subfolder("cgm_output");
+        }
     }
     inline bool prompt_for_missing_folders(config_entry& cfg) {
         // If the input or output folder is not in the config.csv (i.e. its field is empty), prompt the user to select it.
@@ -293,7 +296,7 @@ inline bool load_config(int dataType, config_entry& out) {
         out.bin_size_minutes = stod_or_default(get_value_from_config("bin_size_minutes"), 0.0);
         out.morph_threshold_ecg = stod_or_default(get_value_from_config("morph_threshold_ecg"), 0.0);
         out.morph_threshold_ppg = stod_or_default(get_value_from_config("morph_threshold_ppg"), 0.0);
-        out.pulse_qc_corr_floor = stod_or_default(get_value_from_config("pulse_qc_corr_floor"), 0.0);
+        out.ppg_pearson_threshold = stod_or_default(get_value_from_config("pulse_qc_corr_floor"), 0.0);
         out.ecg_tukey_fence = stod_or_default(get_value_from_config("ecg_tukey_fence"), 1.5);
         out.ppg_tukey_fence = stod_or_default(get_value_from_config("ppg_tukey_fence"), 1.5);
         out.min_beats_template_ecg = stod_or_default(get_value_from_config("min_beats_template_ecg"), 0);
@@ -302,6 +305,7 @@ inline bool load_config(int dataType, config_entry& out) {
         out.region_around_PPGPeak_for_morphology_split = stod_or_default(get_value_from_config("region_around_PPGPeak_for_morphology_split"), 0.0);
         out.input_path = get_value_from_config("original_file_path");
         out.output_path = get_value_from_config("output_folder");
+        out.cgm_folder = get_value_from_config("cgm_folder");
         out.use_consensus_rpeak = parseBool(get_value_from_config("use_consensus_rpeak"), true);
         out.exclude_beat_after_ectopic = parseBool(get_value_from_config("exclude_beat_after_ectopic"), true);
         out.override_morphology = parseBool(get_value_from_config("override_morphology"), false);
@@ -309,11 +313,11 @@ inline bool load_config(int dataType, config_entry& out) {
         if (out.notch_filter_hz != 0.0 &&
             out.notch_filter_hz != 50.0 &&
             out.notch_filter_hz != 60.0) {
-            std::cerr << "WARNING: notch_filter_hz=" << out.notch_filter_hz
-                << " is not 0, 50 or 60; disabling notch filter\n";
+            std::cerr << "WARNING: notch_filter_hz=" << out.notch_filter_hz  << " is not 0, 50 or 60; disabling notch filter\n";
             out.notch_filter_hz = 0.0;
         }
         out.waveform_highpass_hz = stod_or_default(get_value_from_config("waveform_highpass_hz"), 0.0);
+        out.cgm_bin_minutes = stod_or_default(get_value_from_config("cgm_bin_minutes"), 60.0);
 
         // --- Subject demographics (stored only, ignored downstream for now) ---
         out.age = stod_or_default(get_value_from_config("age"), 0);

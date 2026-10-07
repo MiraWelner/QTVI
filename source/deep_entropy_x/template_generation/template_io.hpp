@@ -1335,8 +1335,12 @@ namespace templates_io {
         if (!f) return false;
         char header[8] = {};
         if (!detail::readRaw(f, header, sizeof(header))) return false;
+        // TEMP: accept old archives written without the 8-byte magic -- read
+ // them from byte 0. Remove once every archive has been rewritten.
+        bool magicOk = true;
         for (std::size_t i = 0; i < sizeof(header); ++i)
-            if (header[i] != magic[i]) return false;   // wrong format, or pre-magic
+            if (header[i] != magic[i]) magicOk = false;
+        if (!magicOk) { f.clear(); f.seekg(0); }
         uint32_t ver = 0, nBlocks = 0;
         if (!detail::readRaw(f, &ver, 4) || !detail::readRaw(f, &nBlocks, 4))
             return false;

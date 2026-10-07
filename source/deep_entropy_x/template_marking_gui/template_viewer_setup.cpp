@@ -506,6 +506,7 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
         // crash, not just a cosmetic misplacement). Rejected markers keep
         // whatever seed_all() already put there.
         size_t rejectedCount = 0;
+        size_t savedBarsRestored = 0;   // exact saved bar positions copied in
         size_t reanchoredLeads = 0;   // (bin, lead) pairs whose saved bars moved with R
         // DOUBLE, and the bound compared as one: casting a fractional saved
         // position to size_t truncates, which would let len-0.5 through.
@@ -608,6 +609,25 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                             dm.q_onset = safeIdx(withR(sm.q_onset), dm.q_onset, len);
                             dm.s_end = safeIdx(withR(sm.s_end), dm.s_end, len);
                             dm.t_end = safeIdx(withR(sm.t_end), dm.t_end, len);
+                        }
+                        // THE SAVED BARS TOO: where every bar was at the last
+                        // save, moved or not (readTemplateMarkingsBin's
+                        // saved_bars). Copied here because this loop builds the
+                        // viewer's bins field by field, and anything it does not
+                        // copy is lost -- which is how an unmoved bar used to be
+                        // re-detected after a reload. Same R re-anchoring and the
+                        // same per-anchor length check as the edits above; a
+                        // position out of range is dropped (-1) and counted.
+                        for (AnchorType a : anchor_view::anchor_array) {
+                            const auto it = s.saved_bars.find({ c, slot, static_cast<int>(a) });
+                            if (it == s.saved_bars.end()) continue;
+                            const AnchoredBankSlot* as = d.bankSlotFor(c, slot, a);
+                            const size_t len = as ? as->tmpl.size()
+                                : d.ecg_bank[c].templates[slot].tmpl.size();
+                            std::array<double, 4> v = it->second;
+                            for (double& x : v) x = safeIdx(withR(x), -1.0, len);
+                            for (double x : v) if (x >= 0.0) ++savedBarsRestored;
+                            d.saved_bars[{ c, slot, static_cast<int>(a) }] = v;
                         }
                     }
                 }
@@ -761,6 +781,11 @@ bool TemplateViewerWindow::restoreMarkersFrom(const QString& markingsBinPath, bo
                 "their bars were re-anchored on R (listed above)\n", reanchoredLeads);
         fprintf(stderr, "[markers] reloaded from %s (%zu of %zu bin(s) restored)\n",
             markingsBinPath.toStdString().c_str(), n, m_bins.size());
+        // How many exact saved bar positions came in. 0 means the file has no
+        // saved-bars block, or this build is not reading it -- and every bar
+        // the operator did not move this session will be re-detected.
+        fprintf(stderr, "[markers] %zu saved bar position(s) restored exactly (moved or not)%s\n",
+            savedBarsRestored, savedBarsRestored ? "" : " -- *** NONE: unmoved bars will be re-detected");
         return true;
     }
     catch (const std::exception& e) {

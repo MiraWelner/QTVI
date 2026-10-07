@@ -287,14 +287,44 @@ struct time_bin {
         return static_cast<int>(ecg_bank[lead].templates.size());
     }
 
-    // (final_bars deleted. It held what a previous save recorded, keyed
-    //  (lead, slot, anchor), and NOTHING EVER READ IT -- the live answer is
-    //  barsForPanel, which resolves the edit cells against the panel's own
-    //  detection on every paint, and that is what every consumer used. The
-    //  final-bars BLOCK IN THE FILE STAYS: it is the record of where the bars
-    //  ended up in each alignment, which cannot be recomputed later, and
-    //  external readers use it. readTemplateMarkingsBin now steps over those
-    //  bytes instead of storing them.)
+    // WHERE EVERY BAR WAS AT THE LAST SAVE -- the file's "where every bar ended
+    // up" block, per (lead, slot, alignment tag), in that alignment's own
+    // columns: { p_begin, q_onset, s_end, t_end }, -1 where not saved.
+    //
+    // A RELOAD RESTORES BARS EXACTLY. An unmoved bar is drawn, exported and
+    // saved again at this position -- NOT re-detected on the current average.
+    // Kept apart from slotMarks on purpose: those cells hold operator edits and
+    // nothing else, and this is the record of where the bar was, edited or not.
+    // The detection is used only for a bar that has never been saved.
+    std::map<std::array<int, 3>, std::array<double, 4>> saved_bars;
+
+    // The operator moved bar k (0 p_begin, 1 q_onset, 2 s_end, 3 t_end) on
+    // (lead, slot) THIS session: its saved positions go, in every alignment,
+    // so the new edit is what every view shows. Called by the drag handler.
+    void clearSavedBar(int lead, int slot, int k) {
+        if (k < 0 || k > 3) return;
+        for (auto& kv : saved_bars)
+            if (kv.first[0] == lead && kv.first[1] == slot) kv.second[k] = -1.0;
+    }
+
+    // The saved position of `marker` in alignment a's columns, or -1. A bar
+    // not saved in a's own columns comes from its owner alignment's saved
+    // value, translated into a -- the same translation an edit gets.
+    double savedBar(int lead, int slot, AnchorType a, int marker) const {
+        int k = -1;
+        if (marker == anchor_view::p_begin) k = 0;
+        else if (marker == anchor_view::q_begin) k = 1;
+        else if (marker == anchor_view::j_point) k = 2;
+        else if (marker == anchor_view::t_end) k = 3;
+        if (k < 0) return -1.0;
+        const auto it = saved_bars.find({ lead, slot, static_cast<int>(a) });
+        if (it != saved_bars.end() && it->second[k] >= 0.0) return it->second[k];
+        const AnchorType owner = anchor_view::anchorFor(marker);
+        if (owner == a) return -1.0;
+        const auto io = saved_bars.find({ lead, slot, static_cast<int>(owner) });
+        if (io == saved_bars.end() || !(io->second[k] >= 0.0)) return -1.0;
+        return io->second[k] + frameShift(lead, owner, a);
+    }
 
     // R peak column: auto-only, re-derived each pass from the template r_col;
     // NOT per-anchor and NOT persisted. Kept flat, and now DOUBLE like every
@@ -724,6 +754,38 @@ inline double userBar(const time_bin& b, int lead, int slot,
     if (!b.canFrameShift(lead, src, anchor)) return -1.0;
     const double moved = v + b.frameShift(lead, src, anchor);
     return (moved >= 0.0) ? moved : -1.0;
+}
+
+// R PEAK BETWEEN THE USER MARKS. The same rule detect_template_landmarks uses
+// for its final R -- the sample furthest from the mean of the trace at the two
+// brackets, then the same sub-sample fit -- but bracketed by the USER Q onset
+// and S end, never by detected ones. With detected brackets a detected S end a
+// few samples later shifts that mean, and on a complex whose R and S deflect
+// about equally the choice flips between them (bin 28 B: 17.9 ms). -1 when
+// either bar is absent: nothing is measured between brackets that do not exist.
+inline double rPeakInBars(const std::vector<double>& t, double q_onset, double s_end,
+    curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto)
+{
+    const int n = static_cast<int>(t.size());
+    if (n < 2 || q_onset < 0.0 || s_end <= q_onset) return -1.0;
+    const int qa = std::clamp(static_cast<int>(std::lround(q_onset)), 0, n - 1);
+    const int jb = std::clamp(static_cast<int>(std::lround(s_end)), 0, n - 1);
+    if (jb <= qa || std::isnan(t[qa]) || std::isnan(t[jb])) return -1.0;
+    const double B = 0.5 * (t[qa] + t[jb]);
+    int best = -1; double bd = -1.0;
+    for (int i = qa; i <= jb; ++i) {
+        if (std::isnan(t[i])) continue;
+        const double d = std::abs(t[i] - B);
+        if (d > bd) { bd = d; best = i; }
+    }
+    if (best < 0) return -1.0;
+    std::vector<double> u = t;
+    if (t[best] < B) for (double& x : u) x = -x;
+    const double rr = upsample_for_fit::find_peak(u, best, upsample_for_fit::peak_sigma::R,
+        upsample_for_fit::peak_halfwidth::R, peakMode);
+    // The fit refines the chosen sample; it may not carry R out of the bars.
+    if (!std::isfinite(rr)) return static_cast<double>(best);
+    return std::clamp(rr, static_cast<double>(qa), static_cast<double>(jb));
 }
 
 struct EcgFeatures {
@@ -1197,9 +1259,16 @@ inline tbank::BankMarkerSet finalBarsFor(const time_bin& b, int lead,
             continue;
         }
         const double edit = userBar(b, lead, slot, anchor, bar.marker);
-        // NOT std::max: an edit BELOW the detection is a legitimate edit. The
-        // test is "is there an edit", and only then does the detection stand.
-        out.*bar.out = (edit >= 0.0) ? edit
+        // NOT std::max: an edit BELOW the detection is a legitimate edit.
+        // Order: WHERE THE BAR WAS AT THE LAST SAVE, in this alignment's own
+        // columns -- exact, moved or not, with no frame translation (an edit
+        // translated through rebuilt alignment frames can land a sample off);
+        // else the operator's edit (a bar moved this session has its saved
+        // position cleared, so this is what it shows); the detection only for
+        // a bar that has never been saved.
+        const double saved = b.savedBar(lead, slot, anchor, bar.marker);
+        out.*bar.out = (saved >= 0.0) ? saved
+            : (edit >= 0.0) ? edit
             : (detected.valid ? bar.det : -1.0);
     }
     return out;
@@ -1503,22 +1572,24 @@ inline EcgFiducials ecgFiducialsFrom(const EcgDetection& d, double sampleRate,
     out.p_begin = lm.p_begin;
     out.q_onset = lm.q_onset;
     out.q_onset_found = lm.q_onset_found;
-    out.q_peak = lm.q_peak;
-    out.r_peak = lm.r_peak;
     out.s_end = lm.s_end;
     out.t_end = lm.t_end;
-    out.s_peak = d.s_peak;
+
+    // R, AND THE Q AND S PEAKS FOUND FROM IT, BETWEEN THE USER MARKS -- the
+    // bars on screen. Nothing is bracketed by a detected mark.
+    out.r_peak = rPeakInBars(*d.tmpl, bars.q_onset, bars.s_end, peakMode);
+    {
+        const int rInt = (out.r_peak >= 0.0) ? static_cast<int>(std::lround(out.r_peak)) : -1;
+        out.q_peak = (rInt >= 0) ? FeatureMarks::find_q_peak(*d.tmpl, rInt, sampleRate, 1.0, peakMode) : -1.0;
+        out.s_peak = (rInt >= 0) ? FeatureMarks::find_s_peak(*d.tmpl, rInt, sampleRate, 1.0, peakMode) : -1.0;
+    }
 
     // P AND T PEAK ARE BRACKET-DERIVED, not detected on their own.
     // TemplateLandmarks has no t_peak field at all -- reactive_ecg is the one
     // function that measures both, between the bars that bracket them.
-    const bool haveP = (bars.p_begin >= 0.0 && bars.q_onset >= 0.0);
-    const bool haveT = (bars.s_end >= 0.0 && bars.t_end >= 0.0);
+    // BOUNDED BY THE USER MARKS ONLY -- the bars on screen. No fallback.
     const FeatureMarks::ReactiveEcg rx = FeatureMarks::update_t_and_p_location(*d.tmpl,
-        haveP ? bars.p_begin : lm.p_begin,
-        haveP ? bars.q_onset : lm.q_onset,
-        haveT ? bars.s_end : lm.s_end,
-        haveT ? bars.t_end : lm.t_end,
+        bars.p_begin, bars.q_onset, bars.s_end, bars.t_end,
         sampleRate, peakMode);
     out.p_peak = rx.p_peak;
     out.t_peak = rx.t_peak;
@@ -2142,7 +2213,13 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             //  consumer was that argument, and the p_peak and
                             //  t_peak COLUMNS are glyphs -- auto only -- so the
                             //  user-bracketed pair was never printed.)
-                            const FeatureMarks::ReactiveEcg auto_s_and_t_bars_for_bracketing_tpeak = FeatureMarks::update_t_and_p_location(ecg, aa.p_begin[c], aa.q_onset[c], aa.s_end[c], aa.t_end[c], sampleRateHz, peakMode);
+                            // P AND T PEAK ARE BOUNDED BY THE USER MARKS (umk -- the
+                            // values this row prints in its _user columns). P peak
+                            // lies between the user P begin and Q onset, T peak
+                            // between the user S end and T end. No fallback.
+                            const FeatureMarks::ReactiveEcg auto_s_and_t_bars_for_bracketing_tpeak = FeatureMarks::update_t_and_p_location(ecg,
+                                umk.p_begin, umk.q_onset, umk.s_end, umk.t_end,
+                                sampleRateHz, peakMode);
                             // Empty, not computed, with no trace: computeEcgFeatures on an
                             // empty vector still returns an s_idx.
                             EcgFeatures ftAuto = asl
@@ -2178,14 +2255,24 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                             // returns false for it, so emitEcgPoint never reads it. It is
                             // left as -1 rather than as the reactive value to make the
                             // absence explicit at the table rather than only at the emit.
+                            // R, AND THE Q AND S PEAKS FOUND FROM IT, BETWEEN
+                            // THE USER MARKS (umk) -- the same function the
+                            // viewer draws them with. Nothing bracketed by a
+                            // detected mark.
+                            const double rUser = rPeakInBars(ecg, umk.q_onset, umk.s_end, peakMode);
+                            const int rUserInt = (rUser >= 0.0) ? static_cast<int>(std::lround(rUser)) : -1;
+                            const double qPeakUser = (rUserInt >= 0)
+                                ? FeatureMarks::find_q_peak(ecg, rUserInt, sampleRateHz, 1.0, peakMode) : -1.0;
+                            const double sPeakUser = (rUserInt >= 0)
+                                ? FeatureMarks::find_s_peak(ecg, rUserInt, sampleRateHz, 1.0, peakMode) : -1.0;
                             struct P { const char* name; double a; double u; };
                             const P pts[] = {
                                 { "p_begin", aa.p_begin[c],  umk.p_begin  },
                                 { "p_peak",  auto_s_and_t_bars_for_bracketing_tpeak.p_peak,  -1.0         },   // glyph: auto only
                                 { "q_onset", aa.q_onset[c],  umk.q_onset  },
-                                { "q_peak",  ftAuto.q_idx,   -1.0         },   // glyph: auto only
-                                { "r_peak",  aa.r_peak[c],   -1.0         },   // glyph: auto only
-                                { "s_peak",  ftAuto.s_idx,   -1.0         },   // glyph: auto only
+                                { "q_peak",  qPeakUser,      -1.0         },   // glyph, from rUser
+                                { "r_peak",  rUser,          -1.0         },   // glyph, user-bracketed
+                                { "s_peak",  sPeakUser,      -1.0         },   // glyph, from rUser
                                 { "s_end",   aa.s_end[c],    umk.s_end    },
                                 { "t_peak",  auto_s_and_t_bars_for_bracketing_tpeak.t_peak,  -1.0         },   // glyph: auto only
                                 { "t_end",   aa.t_end[c],    umk.t_end    }
@@ -2232,6 +2319,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                                 ? b.bankSlotFor(c, slot, anchor) : nullptr;
                             const std::vector<double>& ecg = asl2 ? asl2->tmpl : kNoTrace;
                             time_bin::AnchorAuto aa{};   // see the point block above
+                            FeatureMarks::TemplateLandmarks lmGlyph;   // finalBarsFor's fallback
                             if (asl2) {
                                 const int rSeed = static_cast<int>(
                                     std::lround(b.chFor(c, anchor).r_col_raw));
@@ -2242,17 +2330,24 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
                                 aa.p_begin[c] = lm.p_begin;  aa.p_peak[c] = lm.p_peak;
                                 aa.q_onset[c] = lm.q_onset;  aa.r_peak[c] = lm.r_peak;
                                 aa.s_end[c] = lm.s_end;    aa.t_end[c] = lm.t_end;
+                                lmGlyph = lm;
                             }
                             else {
                                 aa.p_begin[c] = aa.p_peak[c] = aa.q_onset[c] =
                                     aa.r_peak[c] = aa.s_end[c] = aa.t_end[c] = -1.0;
                             }
+                            // Same bounds as the point columns: the user marks. No fallback.
+                            const tbank::BankMarkerSet umkG =
+                                finalBarsFor(b, c, slot, anchor, lmGlyph);
                             const FeatureMarks::ReactiveEcg rx = FeatureMarks::update_t_and_p_location(
-                                ecg, aa.p_begin[c], aa.q_onset[c],
-                                aa.s_end[c], aa.t_end[c], sampleRateHz, peakMode);
+                                ecg, umkG.p_begin, umkG.q_onset, umkG.s_end, umkG.t_end,
+                                sampleRateHz, peakMode);
                             emitAutoFeatPt(ecgToMs, ecg, rx.p_peak);
                             emitAutoFeatPt(ecgToMs, ecg, aa.q_onset[c]);
-                            emitAutoFeatPt(ecgToMs, ecg, aa.r_peak[c]);
+                            // R between the user Q onset and S end, as the
+                            // point columns and the glyph -- not aa.r_peak.
+                            emitAutoFeatPt(ecgToMs, ecg,
+                                rPeakInBars(ecg, umkG.q_onset, umkG.s_end, peakMode));
                             emitAutoFeatPt(ecgToMs, ecg, rx.t_peak);
                         }
                     }
@@ -2749,14 +2844,19 @@ inline std::vector<time_bin> readTemplateMarkingsBin(const std::string& path,
         // from applyBankTemplateToWidget -- and a detection in one would make
         // every untouched bar read as placed, suppress barsForPanel's fallback,
         // and report the detector as the operator in the next CSV.
+        // NOW KEPT, in time_bin::saved_bars -- NOT in slotMarks, which still
+        // hold operator edits only. barsForPanel and finalBarsFor read it, so a
+        // reload puts every bar back where it was, moved or not.
         for (int lead = 0; lead < 3; ++lead) {
             const int nSlots = r32();
             for (int slot = 0; slot < nSlots; ++slot) {
                 const int nAnchors = r32();
                 for (int k = 0; k < nAnchors; ++k) {
-                    (void)r32();                                  // anchor tag
-                    (void)r64d(); (void)r64d();                   // p_begin, q_onset
-                    (void)r64d(); (void)r64d();                   // s_end, t_end
+                    const int tag = r32();                        // anchor tag
+                    std::array<double, 4> v{};
+                    v[0] = r64d(); v[1] = r64d();                 // p_begin, q_onset
+                    v[2] = r64d(); v[3] = r64d();                 // s_end, t_end
+                    b.saved_bars[{ lead, slot, tag }] = v;
                 }
             }
         }

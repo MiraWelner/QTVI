@@ -765,6 +765,11 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
             m_rates[static_cast<size_t>(Channel::Ecg)], m_peakFitMode, bars);
         r.ecgPPeak = fid.p_peak;
         r.ecgTPeak = fid.t_peak;
+        // R and the Q/S peaks found from it: between the USER bars, the same
+        // function the markings CSV uses (ecgFiducialsFrom -> rPeakInBars).
+        r.ecgRPeak = fid.r_peak;
+        r.ecgQPeak = fid.q_peak;
+        r.ecgSPeak = fid.s_peak;
         // The fits behind them, so peakCandidatesFor(P/T) returns the curve
         // that placed the glyph. Written every repaint alongside the positions
         // they belong to: the bars move without invalidating m_detValid, so a
@@ -1450,9 +1455,9 @@ void BinPlotWidget::mousePressEvent(QMouseEvent* e) {
             const Reactive rx = reactiveGlyphs();
             const FeatureMarks::TemplateLandmarks& lm = detectedLandmarks();
             const GlyphHit glyphs[] = {
-                { EcgRPeak, lm.r_peak },
+                { EcgRPeak, rx.ecgRPeak },   // between the user bars, as drawn
                 { EcgPPeak, rx.ecgPPeak },
-                { EcgQPeak, lm.q_onset_found ? lm.q_peak : -1.0 },
+                { EcgQPeak, rx.ecgQPeak },
                 { EcgTPeak, rx.ecgTPeak },
                 // Transition fiducials at their DRAWN (detected) positions --
                 // independent of the bars, so clickable where they're shown even
@@ -1763,8 +1768,8 @@ void BinPlotWidget::drawFeatureGlyphs(QPainter& p, double yLo, double yHi, doubl
         found(lm.q_onset, lm.q_onset_found);
         // No Q trough means no Q peak: q_peak comes back -1 there, and the
         // circle above already says the onset was a fallback.
-        if (lm.q_onset_found) cross(lm.q_peak);
-        cross(lm.r_peak);            // R wave
+        if (rx.ecgQPeak >= 0.0) cross(rx.ecgQPeak);   // from the user-bracketed R
+        cross(rx.ecgRPeak);          // R wave: between the Q-onset/S-end bars
         cross(lm.s_end);             // S end
         cross(rx.ecgTPeak);          // reactive: between the S-end/T-end bars
         cross(lm.t_end);             // T end

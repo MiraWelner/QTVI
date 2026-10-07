@@ -665,25 +665,33 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             //
             // ecgA, not ecg: this block's own alignment, whose columns these
             // numbers are expressed in.
-            const auto plRa = placeEcgPeak(ecgA, EcgPeak::R, aa.r_peak,
-                m_peakFitMode);
-            const double rPeakOut = (plRa.position >= 0.0) ? plRa.position
-                : aa.r_peak;
+            // P PEAK, R, AND THE Q AND S PEAKS FROM THAT R: ALL BETWEEN THE USER
+            // MARKS (umk), in both the auto and the user columns -- the same
+            // functions the viewer glyphs and the markings CSV use. Nothing is
+            // bracketed by a detected mark. (rxA, the detector-bracketed
+            // version, is no longer used for any column.)
+            (void)rxA;
+            const double rUser = rPeakInBars(ecgA, umk.q_onset, umk.s_end, m_peakFitMode);
+            const int rUserInt = (rUser >= 0.0) ? static_cast<int>(std::lround(rUser)) : -1;
+            const double qPkUser = (rUserInt >= 0)
+                ? FeatureMarks::find_q_peak(ecgA, rUserInt, m_sampleRate, 1.0, m_peakFitMode) : -1.0;
+            const double sPkUser = (rUserInt >= 0)
+                ? FeatureMarks::find_s_peak(ecgA, rUserInt, m_sampleRate, 1.0, m_peakFitMode) : -1.0;
 
             ecgAuto[c][0] = aa.p_begin;
-            ecgAuto[c][1] = rxA.p_peak;          // reactive glyph, detector brackets
+            ecgAuto[c][1] = rxU.p_peak;          // between the user bars
             ecgAuto[c][2] = aa.q_onset;
-            ecgAuto[c][3] = ftAuto[c].q_idx;
-            ecgAuto[c][4] = rPeakOut;
-            ecgAuto[c][5] = ftAuto[c].s_idx;
+            ecgAuto[c][3] = qPkUser;
+            ecgAuto[c][4] = rUser;
+            ecgAuto[c][5] = sPkUser;
             ecgAuto[c][6] = aa.s_end;
             ecgAuto[c][7] = aa.t_end;
             ecgUser[c][0] = umk.p_begin;
-            ecgUser[c][1] = rxU.p_peak;          // reactive glyph, operator brackets
+            ecgUser[c][1] = rxU.p_peak;          // between the user bars
             ecgUser[c][2] = umk.q_onset;
-            ecgUser[c][3] = ftUser[c].q_idx;
-            ecgUser[c][4] = b.r_peak_ch[c];
-            ecgUser[c][5] = ftUser[c].s_idx;
+            ecgUser[c][3] = qPkUser;
+            ecgUser[c][4] = rUser;
+            ecgUser[c][5] = sPkUser;
             ecgUser[c][6] = umk.s_end;
             ecgUser[c][7] = umk.t_end;
         }

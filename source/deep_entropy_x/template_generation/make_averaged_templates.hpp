@@ -729,6 +729,30 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
                 auto it = result[b].kept_beats_by_channel.find(kChanKeys[c]);
                 return (it == result[b].kept_beats_by_channel.end()) ? 0 : it->second.size();
             });
+
+        // A reloaded ECG row is the same heartbeat only if this run made EVERY
+        // R-pair a row, in order -- as the archive's run did. Said per run, so
+        // an ECG reload that cannot be identical is visible, not inferred.
+        if (priorSplit->override_gates) {
+            for (int c = 0; c < 3; ++c) {
+                size_t binsWith = 0, binsIdentity = 0;
+                for (size_t i = 0; i < n && i < ecg_res.kept_index[c].size(); ++i) {
+                    const std::vector<size_t>& k = ecg_res.kept_index[c][i];
+                    if (k.empty()) continue;
+                    ++binsWith;
+                    const size_t pairs = wave_data[i].ch1.raw.size() > 1 ? wave_data[i].ch1.raw.size() - 1 : 0;
+                    bool id = (k.size() == pairs);
+                    for (size_t r = 0; id && r < k.size(); ++r) id = (k[r] == r);
+                    if (id) ++binsIdentity;
+                    else std::fprintf(stderr, "  [split-reload] CH%d bin %zu: %zu ECG row(s) for %zu"
+                        " R-pair(s) -- rows are NOT heartbeats here, this bin cannot be identical\n",
+                        c + 1, i, k.size(), pairs);
+                }
+                if (binsWith)
+                    std::fprintf(stderr, "  [split-reload] CH%d: every R-pair is an ECG row in %zu of"
+                        " %zu bin(s)\n", c + 1, binsIdentity, binsWith);
+            }
+        }
     }
 
     //write templates.csv, beats.bin, templates.bin, and bins.csv.

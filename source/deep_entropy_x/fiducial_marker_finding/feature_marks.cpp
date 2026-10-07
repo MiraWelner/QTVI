@@ -26,7 +26,7 @@ namespace {
     const double S_PEAK_WIN_S = 0.10;
     const double J_POINT_WIN_S = 0.10;
     const double T_END_WIN_LO_S = 0.100;
-    const double T_END_WIN_HI_S = 0.500;
+    const double T_END_WIN_HI_S = 0.400;
     //how deep does Q have to be for it to be found - else it is a circle and marked not found
     const double Q_MIN_DEPTH = 0.0075;
 
@@ -208,7 +208,7 @@ double FeatureMarks::find_p_peak(const std::vector<double>& v, double loIn, doub
     int a = lo, b = hi;
     const bool anyFinite = sample_extent::trimToFinite(v, a, b);
     (void)anyFinite;   // each caller's own sentinel follows
-    if (b < a) return static_cast<double>(fFin);   // window was a NaN gap
+    if (b < a) return static_cast<double>(lo);   // window was a NaN gap: stay inside the bars
     const double B = v[b];
     int best = a; double bd = -1.0;
     for (int i = a; i <= b; ++i) {
@@ -219,9 +219,12 @@ double FeatureMarks::find_p_peak(const std::vector<double>& v, double loIn, doub
     std::vector<double> u = v;
     const bool flipped = (v[best] < B);
     if (flipped) for (double& x : u) x = -x;
+    // CLAMPED TO THE BRACKET, as find_t_peak is. This clamped to the whole
+    // template [fFin, lFin], so the curve-fit refinement could carry the P peak
+    // out past the P begin bar -- a P peak before P begin.
     return std::clamp(refine_peak_keeping_candidates(u, best,
         upsample_for_fit::peak_sigma::P, upsample_for_fit::peak_halfwidth::P,
-        peakMode, flipped, cand), static_cast<double>(fFin), static_cast<double>(lFin));
+        peakMode, flipped, cand), static_cast<double>(lo), static_cast<double>(hi));
 }
 
 double FeatureMarks::find_j_point(const std::vector<double>& v, double fs, int r_col, double sgn, upsample_for_fit::TransitionCandidates* candOut, curve_fit::FitMode mode) {
@@ -519,7 +522,7 @@ FeatureMarks::ReactivePpg FeatureMarks::update_ppg_markings(const std::vector<do
 }
 
 double FeatureMarks::signal_location_at_height(const std::vector<double>& v, int a, int b, double target) {
-	//for features like t50, t80, t80_rise, pw80, and peak2, find the sub-sample location of a target height between two bars. 
+    //for features like t50, t80, t80_rise, pw80, and peak2, find the sub-sample location of a target height between two bars. 
     //Returns -1 if the target is not crossed between the bars.
     const int N = static_cast<int>(v.size());
     if (a < 0 || b <= a || b >= N) return -1.0;
@@ -1267,8 +1270,11 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     return with_bar_placeholders(out, tmplIn, sampleRate);
 }
 
-// find_t_end's window: [J + 100 ms, J + 700 ms], trimmed to the last real
-// sample. Fixed from J -- nothing to do with the next R. ONE DEFINITION, used
+// find_t_end's window: [J + 100 ms, J + 400 ms] (T_END_WIN_LO_S / _HI_S),
+// trimmed to the last real sample. Fixed from J -- nothing to do with the next
+// R. It was J + 700 ms, which at RR ~720 ms lands on the NEXT beat's QRS, so
+// the "post-T baseline at the ceiling" find_t_end measures against was a QRS
+// sample and T end came out on the next R. ONE DEFINITION, used
 // by find_t_end and by the T-end placeholder, so a placeholder sits at the
 // centre of exactly the range T end was searched in.
 void FeatureMarks::t_end_window(const std::vector<double>& v, double fs, int r_col,
@@ -1280,8 +1286,8 @@ void FeatureMarks::t_end_window(const std::vector<double>& v, double fs, int r_c
     auto cl = [&](int i) { return std::clamp(i, 0, N - 1); };
     const int lastFin = sample_extent::lastFinite(v);
     if (lastFin < 0) return;
-    lo = cl(static_cast<int>(std::lround(j_point + 0.100 * fs)));
-    hi = std::min(cl(static_cast<int>(std::lround(j_point + 0.700 * fs))), lastFin);
+    lo = cl(static_cast<int>(std::lround(j_point + T_END_WIN_LO_S * fs)));
+    hi = std::min(cl(static_cast<int>(std::lround(j_point + T_END_WIN_HI_S * fs))), lastFin);
 }
 
 FeatureMarks::TemplateLandmarks FeatureMarks::with_bar_placeholders(

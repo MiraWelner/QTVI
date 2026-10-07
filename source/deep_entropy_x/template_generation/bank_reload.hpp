@@ -242,6 +242,7 @@ namespace bank_reload {
         size_t bins_override_no_verdict = 0; // reloaded although nobody ruled on it
         size_t bins_override_slicing = 0;    // reloaded although slicing changed / unknown
         size_t members_dropped = 0;          // rows past this run's kept beats
+        size_t slots_grown = 0;              // bank slots added to fit the archive
     };
 
     namespace detail {
@@ -394,6 +395,7 @@ namespace bank_reload {
         rep.bins_with_prior = rep.bins_reloaded = rep.bins_no_verdict = 0;
         rep.bins_slicing_changed = rep.bins_slot_mismatch = 0;
         rep.bins_override_no_verdict = rep.bins_override_slicing = rep.members_dropped = 0;
+        rep.slots_grown = 0;
         rep.override_gates = arch.override_gates;
         if (!arch.usable()) { arch.rep = rep; return rep; }
         const auto& blocks = arch.blocks;
@@ -439,10 +441,20 @@ namespace bank_reload {
             }
 
             bool slotsOk = true;
+            std::array<bool, 4> grow{ { false, false, false, false } };
             for (int c = 0; c < 4 && slotsOk; ++c) {
                 if (needSlots[b][c] < 0) continue;
-                const tbank::TemplateBank* bank = bankOf(b, c);
+                tbank::TemplateBank* bank = bankOf(b, c);
                 const int have = bank ? static_cast<int>(bank->templates.size()) : 0;
+                // override_morphology: a bank too small for the archive is
+                // GROWN to its slot count instead of refusing the bin -- but
+                // only once every channel of the bin has passed (below), so a
+                // bin left fresh never keeps added empty slots. A channel with
+                // no fresh bank at all still cannot be reloaded.
+                if (arch.override_gates && bank && have <= needSlots[b][c]) {
+                    grow[c] = true;
+                    continue;
+                }
                 if (have <= needSlots[b][c]) {
                     slotsOk = false;
                     std::fprintf(stderr,
@@ -452,6 +464,22 @@ namespace bank_reload {
                 }
             }
             if (!slotsOk) { ++rep.bins_slot_mismatch; continue; }
+            // override_morphology: the bank BECOMES the archive's -- cleared
+            // and sized to exactly its slot count, so no template from this
+            // run's fresh split survives beside the reloaded ones. Every slot
+            // the archive names is then written below; a slot it does not
+            // name stays empty.
+            if (arch.override_gates) {
+                for (int c = 0; c < 4; ++c) {
+                    if (needSlots[b][c] < 0) continue;
+                    tbank::TemplateBank* bank = bankOf(b, c);
+                    if (!bank) continue;
+                    const size_t have = bank->templates.size();
+                    const size_t want = static_cast<size_t>(needSlots[b][c]) + 1;
+                    if (want > have) rep.slots_grown += want - have;
+                    bank->templates.assign(want, tbank::template_of_all_signals{});
+                }
+            }
 
             take[b] = 1;
             ++rep.bins_reloaded;
@@ -582,12 +610,12 @@ namespace bank_reload {
                 " reloaded (%zu template(s), %zu beat assignment(s)).\n"
                 "  [split-reload]     reloaded past the gates: %zu with no operator"
                 " verdict, %zu with changed or unverifiable slicing; %zu member row(s)"
-                " past this run's kept beats dropped; %zu bin(s) left fresh (too few"
-                " fresh slots)\n",
+                " past this run's kept beats dropped; %zu bank slot(s) added to fit the"
+                " archive; %zu bin(s) left fresh\n",
                 rep.prior_path.c_str(), rep.bins_reloaded, rep.bins_with_prior,
                 rep.templates_restored, rep.beats_restored,
                 rep.bins_override_no_verdict, rep.bins_override_slicing,
-                rep.members_dropped, rep.bins_slot_mismatch);
+                rep.members_dropped, rep.slots_grown, rep.bins_slot_mismatch);
             return;
         }
         if (!rep.fp_read) {
