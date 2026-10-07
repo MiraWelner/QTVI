@@ -27,7 +27,7 @@ void TemplateViewerWindow::writeNormalizationCsvs() {
         std::vector<double> v(m_bins.size(), std::numeric_limits<double>::quiet_NaN());
         for (size_t i = 0; i < m_bins.size(); ++i) {
             const auto& b = m_bins[i];
-            if (b.bad_segment || b.bad_r_ch[ch]) continue;
+            if (b.bad_r_ch[ch]) continue;
             // THE R BASE, and this function has no alignment parameter to
             // choose otherwise. The per-bin QRS reference divides normalized
             // amplitudes subject-wide, so it must be one alignment for the

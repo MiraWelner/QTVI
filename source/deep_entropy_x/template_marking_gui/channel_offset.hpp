@@ -93,7 +93,7 @@ namespace channel_offset {
     // pulse_matched_filter::derivativePulseLocations for the detector used
     // to build that on the fly).
     //
-    // Bins must expose: bad_segment, ch1.raw, ecgSignal.
+    // Bins must expose: ch1.raw, ecgSignal.
     // Templated so the bin type need not be complete in this header.
     // -------------------------------------------------------------------
     template <class Bins>
@@ -115,7 +115,6 @@ namespace channel_offset {
 
             const double budget = first_n_secs_to_measure_on - out.analyzed_sec;
             if (budget <= 0.0) break;
-            if (bin.bad_segment) continue;
             if (bin.ch1.raw.size() < 2 || feet.size() < 2) continue;
 
             const double binSec = static_cast<double>(bin.ecgSignal.size()) / ecgRate;

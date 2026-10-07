@@ -244,7 +244,6 @@ namespace premark {
 #pragma omp parallel for schedule(dynamic)
 #endif
         for (int i = 0; i < nBins; ++i) {
-            if (i < (int)beats.bad_segment.size() && beats.bad_segment[i]) continue;
             const template_structs::ChannelMethodTemplate& blk = tmpl.bins[i].*methodPtr;
             binResults[i] = runBin(perBin[i], blk.ecgTemplate, blk.r_col, fs, sgn,
                 classifier, i, channel);

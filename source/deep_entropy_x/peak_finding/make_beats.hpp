@@ -147,7 +147,7 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
         const bool hasPPG = !d.ppgSignal.empty();
 
         /* Step 1 - PPG pulse segmentation. Supplies the valley list that
-           bad_segment reads below. */
+           pairRtoPPGBeat reads below. */
         if (hasPPG) {
             try {
                 SegmentPPGResult ppgResult = SegmentPPG(d.ppgSignal, cfg.ppg_upsample_rate);
@@ -190,7 +190,6 @@ inline std::vector<output_binfile_data> create_ecg_ppg_pairs_raw(std::vector<Ann
         detect_channel_raw(d.ch2, d.ecgSignal2, cfg.ecg_upsample_rate, fileID, cfg, ecg2_inverted);
         detect_channel_raw(d.ch3, d.ecgSignal3, cfg.ecg_upsample_rate, fileID, cfg, ecg3_inverted);
 
-        d.bad_segment = (d.ch1.raw.empty() && !d.ppgMinAmps.empty());//if there are no peaks in either ppg or ecg, that is a bad segment
     }
 
     return data;

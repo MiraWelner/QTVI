@@ -93,7 +93,7 @@ namespace normalize_features {
     inline double qrs_height_for_template(const time_bin& b, int ch, int slot, double sampleRateHz)
     {
         //given a bin, lead, and template slot number, get qrs complex height (|R|+|S|)
-        if (b.bad_segment || b.bad_r_ch[ch]) return std::nan("");
+        if (b.bad_r_ch[ch]) return std::nan("");
         const tbank::template_of_all_signals* tp = ecg_slot(b, ch, slot);
         if (!tp || tp->tmpl.empty()) return std::nan("");
         const std::vector<double>& ecg = tp->tmpl;
@@ -203,7 +203,6 @@ namespace normalize_features {
         std::vector<double> vals;
         vals.reserve(bins.size());
         for (const auto& b : bins) {
-            if (b.bad_segment) continue;
             const PulseChannel pc = pulseChan(b, which);
             if (pc.issue != 0) continue;
             if (pc.trace->empty()) continue;
@@ -318,7 +317,7 @@ namespace normalize_features {
     // the raw computation.
     // (Kept here only as a named entry point so build-time code doesn't
     // need to hand-roll the loop.)
-    inline std::vector<double> raw_amplitude_iqr(const std::vector<std::vector<double>>& rawBeats) {
+    inline std::vector<double> raw_amplitude_std(const std::vector<std::vector<double>>& rawBeats) {
         if (rawBeats.empty()) return {};
         size_t maxLen = 0;
         for (const auto& bt : rawBeats) maxLen = std::max(maxLen, bt.size());
@@ -349,7 +348,7 @@ namespace normalize_features {
     // spread of that, and defer only the final /Global_Ref_person to
     // scale_array_by_ref() at display/export time -- exactly mirroring how
     // the ECG spread defers its /ref step.
-    inline std::vector<double> local_ratio_iqr(const std::vector<std::vector<double>>& rawBeats, int footIdx) {
+    inline std::vector<double> local_ratio_std(const std::vector<std::vector<double>>& rawBeats, int footIdx) {
         if (rawBeats.empty()) return {};
         std::vector<std::vector<double>> ratioBeats;
         ratioBeats.reserve(rawBeats.size());
@@ -359,7 +358,7 @@ namespace normalize_features {
             for (size_t i = 0; i < bt.size(); ++i) r[i] = calculate_perfusion_index(bt[i], footY);
             ratioBeats.push_back(std::move(r));
         }
-        return raw_amplitude_iqr(ratioBeats);   // same cross-beat STD mechanics, different input units
+        return raw_amplitude_std(ratioBeats);   // same cross-beat STD mechanics, different input units
     }
 
     // ==================================================================
@@ -547,7 +546,7 @@ namespace normalize_features {
     // QRS's rectified area (Q-onset -> J-point / s_end).
     inline double slot_qrs_area(const time_bin& b, int ch, int slot)
     {
-        if (b.bad_segment || b.bad_r_ch[ch]) return std::nan("");
+        if (b.bad_r_ch[ch]) return std::nan("");
         const tbank::template_of_all_signals* tp = ecg_slot(b, ch, slot);
         if (!tp || tp->tmpl.empty()) return std::nan("");
         const tbank::BankMarkerSet& rmk = b.slotMarks(ch, slot, AnchorType::R_PEAK);
@@ -586,7 +585,6 @@ namespace normalize_features {
         std::vector<double> peaks;
         peaks.reserve(bins.size());
         for (const auto& b : bins) {
-            if (b.bad_segment) continue;
             const vcg_avg::Loop loop = vcg_avg::loopFromTemplates(b, preSamples, postSamples);
             if (loop.pts.empty()) continue;
             double peak = 0.0;

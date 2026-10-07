@@ -63,7 +63,6 @@ struct ChannelRPeaks {
 
 struct output_binfile_data {
     std::vector<std::vector<double>> pairs;
-    bool bad_segment = false;
 
     // Raw signals (always stored unmodified in-memory; not serialized to
     // wave_markings .bin -- the annealed .bin is the source of truth for

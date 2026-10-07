@@ -368,7 +368,6 @@ namespace vcg_avg {
         // all of them and then applied to all of them.
         std::vector<std::vector<double>> all[kNumEcgCh];
         for (const time_bin& b : bins) {
-            if (b.bad_segment) continue;
             std::vector<double> lane[kNumEcgCh];
             if (!binLanes(b, pre, post, lane)) continue;
             for (int c = 0; c < kNumEcgCh; ++c) all[c].push_back(std::move(lane[c]));

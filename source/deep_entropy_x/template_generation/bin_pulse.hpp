@@ -147,7 +147,7 @@ namespace pulse_qc {
 // failure path is one assignment.
 struct PulseTemplateBin {
     std::vector<double> tmpl;                 // column-wise NaN-skipping median
-    std::vector<double> iqr;                  // local-ratio IQR about footCol
+    std::vector<double> std;                  // local-ratio IQR about footCol
     std::vector<std::vector<double>> kept;    // [beat][sample] retained snips
     std::vector<uint32_t> keptSlices;         // R-pair ordinal per retained snip
     std::vector<ptt_log::Beat> ptt;           // every measured beat; see ptt_log
@@ -661,8 +661,8 @@ static inline PulseTemplateBin build_pulse_template_pair_windowed(
     // cross-beat IQR is taken of those local-ratio values. This is NOT the
     // same as taking the IQR of raw amplitudes, because the per-sample
     // transform's slope differs beat-to-beat (each beat has its own foot).
-    out.iqr = (out.footCol >= 0)
-        ? normalize_features::local_ratio_iqr(beatsForTemplate, out.footCol)
+    out.std = (out.footCol >= 0)
+        ? normalize_features::local_ratio_std(beatsForTemplate, out.footCol)
         : std::vector<double>(maxLen, 0.0);
 
     // Retain aligned per-beat slices for downstream (snips CSV, etc).
@@ -726,13 +726,13 @@ inline PPGTemplatesResult CreatePulseTemplates(
 #pragma omp parallel for schedule(dynamic) num_threads(ppg_threads)
     for (int i = 0; i < static_cast<int>(n); ++i) {
         const auto& b = bins[i];
-        if (b.bad_segment || (b.*sigMember).empty() || b.ch1.raw.size() < 2)
+        if ((b.*sigMember).empty() || b.ch1.raw.size() < 2)
             continue;
         try {
             PulseTemplateBin r = build_pulse_template_pair_windowed(
                 b.*sigMember, channelRate, b.ch1.raw, ecgRate, i, lagMs);
             out.templates[i] = std::move(r.tmpl);
-            out.iqrs[i] = std::move(r.iqr);
+            out.iqrs[i] = std::move(r.std);
             out.kept[i] = std::move(r.kept);
             out.keptSlices[i] = std::move(r.keptSlices);
             out.ptt[i] = std::move(r.ptt);

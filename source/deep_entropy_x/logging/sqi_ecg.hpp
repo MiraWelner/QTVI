@@ -25,6 +25,13 @@
  *         from the waveform, which is what the old qrs_positive_at did and
  *         which could disagree with the operator on a complex sitting near
  *         isoelectric.
+ *
+ *         MOTION AND TIMING COME IN FROM THE CALLER TOO. writeEcgSQICsv takes
+ *         the job's beat times and accelerometer result. A beat's time gives
+ *         (a) its motion flag -- 0 when any accelerometer sample over the
+ *         beat has VM > 1.05 g (Task G) -- and (b) the next beat's P onset,
+ *         which closes the TP-segment noise window. Either missing falls
+ *         back: motion -1 (no penalty), noise over 80 ms after T-end.
  */
 
 #include <algorithm>
@@ -39,6 +46,8 @@
 #include "template_generation/template_structs.hpp"
 #include "fiducial_marker_finding/feature_marks.hpp"   // FeatureMarks, LeadPolarity
 #include "stats_utils.hpp"   // pearson, PearsonResult
+#include "prep_for_peakfinding/beat_times.hpp"   // BeatTimes
+#include "accel/accel_pipeline.hpp"              // AccelResult (Task G)
 
  // P/QRS/ST sample ranges for one beat, in the beat's own sample coordinates
  // (the R-aligned template / kept-beat coordinate system).
@@ -122,6 +131,7 @@ inline Segments buildSegments(const std::vector<double>& ecg, int r_col, double 
 struct BeatSQI {
     double templateCorr = 0.0, chiSq0 = 0.0, chiSqAbs = 0.0;    // whole-beat
     double chiSq0_P = 0.0, chiSq0_QRS = 0.0, chiSq0_ST = 0.0;   // subsegmental
+    double chiSqAbs_P = 0.0, chiSqAbs_QRS = 0.0, chiSqAbs_ST = 0.0;   // subsegmental, vs tmplAbs
     double baseline = 0.0, noise = 0.0;
     int motion = 0;               // 1 clean, 0 motion, -1 unavailable
     double composite = 0.0;
@@ -166,8 +176,7 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
     int motionFlag,
     double fs) {
     BeatSQI q{};
-    q.templateCorr = pearsonSQI(beat, tmpl, 0,
-        seg.tHi + static_cast<int>(std::lround(0.050 * fs)));
+    q.templateCorr = std::max(0.0, pearsonSQI(beat, tmpl));   // whole beat, 0..1
     auto chi = [&](const std::vector<double>& ref, int a, int b) {
         double s = 0.0;
         const int hi = std::min(b, static_cast<int>(std::min(beat.size(), ref.size())));
@@ -185,33 +194,22 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
     q.chiSq0_P = chi(tmpl, seg.pLo, seg.pHi);
     q.chiSq0_QRS = chi(tmpl, seg.qrsLo, seg.qrsHi);
     q.chiSq0_ST = chi(tmpl, seg.stLo, seg.stHi);
+    q.chiSqAbs_P = chi(tmplAbs, seg.pLo, seg.pHi);
+    q.chiSqAbs_QRS = chi(tmplAbs, seg.qrsLo, seg.qrsHi);
+    q.chiSqAbs_ST = chi(tmplAbs, seg.stLo, seg.stHi);
 
+    // Baseline: the sample at P onset against the sample at T end.
     const int lastIdx = static_cast<int>(beat.size()) - 1;
     if (lastIdx >= 0) {
-        const int pLo = std::clamp(seg.pLo, 0, lastIdx);
-        const int pw = std::max(3, seg.pHi - seg.pLo);        // ~P-wave width
-        const int wLo = std::max(0, pLo - pw);
-        double preP;
-        {
-            std::vector<double> win;
-            win.reserve(pLo - wLo);
-            for (int i = wLo; i < pLo; ++i)
-                if (!std::isnan(beat[i])) win.push_back(beat[i]);
-            if (win.empty()) {
-                preP = beat[pLo];                              // fallback: single sample
-            }
-            else {
-                std::sort(win.begin(), win.end());
-                const size_t m = win.size() / 2;
-                preP = (win.size() % 2 == 0)
-                    ? 0.5 * (win[m - 1] + win[m]) : win[m];
-            }
-        }
-
+        const double preP = beat[std::clamp(seg.pLo, 0, lastIdx)];
         const double postT = beat[std::clamp(seg.tHi, 0, lastIdx)];
-        q.baseline = std::max(0.0, 1.0 - std::abs(preP - postT) / 0.5); // 0.5 mV
+        q.baseline = (std::isnan(preP) || std::isnan(postT)) ? 0.0
+            : std::max(0.0, 1.0 - std::abs(preP - postT) / 0.5); // 0.5 mV
     }
-    const int noiseHi = seg.tHi + static_cast<int>(std::lround(0.080 * fs));
+    // Noise over the TP segment, [T end, next beat's P onset]. When the next
+    // P onset is unknown (nextPLo not past tHi), 80 ms after T end instead.
+    const int noiseHi = (seg.nextPLo > seg.tHi + 1) ? seg.nextPLo
+        : seg.tHi + static_cast<int>(std::lround(0.080 * fs));
     q.noise = std::max(0.0, 1.0 - stddevSQI(beat, seg.tHi, noiseHi) / 0.1);   // 0.1 mV budget
 
     q.motion = motionFlag;
@@ -231,17 +229,22 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
 // Called from analysis_job::finalize() once job.tmpl/job.beats are final.
 // `pol` is built there from the job's per-channel inversion flags.
 //
-// motionFlag is left at -1 (unavailable): at this stage of the pipeline
-// there's no finer per-beat motion signal available than bad_segment
-// (already filtered out above), so composite falls back to the
-// templateCorr*baseline*noise product with no motion penalty.
+// times / accel are optional (nullptr = not available):
+//   * motion: a beat spans [t - r_col/fs, t + (len - r_col)/fs] around its R
+//     time t; the accelerometer answers 1 clean / 0 motion for that span, -1
+//     with no accelerometer or no time.
+//   * next P onset: this beat's pLo moved on by the R-R interval to the next
+//     kept row, when that interval is plausible (under 1.5x the bin's median,
+//     so a pruned beat in between does not stretch it); else unknown.
 // ---------------------------------------------------------------------
 inline void writeEcgSQICsv(const config_entry& cfg,
     const std::string& stem,
     const template_structs::TemplateFile& tmpl,
     const template_structs::BeatsFile& beats,
     double ecgFs,
-    const LeadPolarity& pol) {
+    const LeadPolarity& pol,
+    const beat_times::BeatTimes* times = nullptr,
+    const accel_pipeline::AccelResult* accel = nullptr) {
     const std::string outPath = cfg.training_log + "/" + stem + "_quality.csv";
     std::ofstream f(outPath);
     if (!f.is_open()) {
@@ -250,7 +253,7 @@ inline void writeEcgSQICsv(const config_entry& cfg,
     }
 
     f << "bin,channel,beat,template_corr,chiSq0,chiSqAbs,chiSq0_P,chiSq0_QRS,chiSq0_ST,"
-        "baseline,noise,motion,composite,is_included\n";
+        "chiSqAbs_P,chiSqAbs_QRS,chiSqAbs_ST,baseline,noise,motion,composite,is_included\n";
 
     // `lead` IS IN THE TABLE, not derived from the loop. The loop below is a
     // range-for over this array, so there is no counter to index pol with --
@@ -269,11 +272,9 @@ inline void writeEcgSQICsv(const config_entry& cfg,
     };
     static const char* const included_levels[] = { "INCLUDE", "SUBSTITUTE", "EXCLUDE" };
 
-    constexpr int motionFlag = -1;   // see comment above
 
     for (size_t bin = 0; bin < tmpl.bins.size(); ++bin) {
         const auto& bt = tmpl.bins[bin];
-        if (bt.bad_segment) continue;
 
         for (const ChannelSpec& ch : channels) {
             const auto& rawBlk = bt.*ch.raw;
@@ -288,12 +289,48 @@ inline void writeEcgSQICsv(const config_entry& cfg,
             const Segments seg = buildSegments(rawBlk.ecgTemplate, rawBlk.r_col, ecgFs,
                 pol.sign(ch.lead));
 
+            // R time of each kept row, and the bin's median R-R between
+            // consecutive rows, for the next-P-onset bound.
+            auto tAt = [&](size_t row) {
+                return times ? times->at(ch.lead, bin, static_cast<uint32_t>(row))
+                    : std::numeric_limits<double>::quiet_NaN();
+                };
+            double medRR = std::numeric_limits<double>::quiet_NaN();
+            {
+                std::vector<double> rr;
+                for (size_t bi = 0; bi + 1 < binBeats.size(); ++bi) {
+                    const double d = tAt(bi + 1) - tAt(bi);
+                    if (std::isfinite(d) && d > 0.0) rr.push_back(d);
+                }
+                if (!rr.empty()) {
+                    std::nth_element(rr.begin(), rr.begin() + rr.size() / 2, rr.end());
+                    medRR = rr[rr.size() / 2];
+                }
+            }
+
             for (size_t bi = 0; bi < binBeats.size(); ++bi) {
-                const BeatSQI q = computeEcgSQI(binBeats[bi], rawBlk.ecgTemplate,
-                    absBlk.ecgTemplate, seg, motionFlag, ecgFs);
+                const std::vector<double>& beat = binBeats[bi];
+                const double t = tAt(bi);
+
+                Segments s = seg;
+                const double rr = (bi + 1 < binBeats.size()) ? tAt(bi + 1) - t
+                    : std::numeric_limits<double>::quiet_NaN();
+                if (std::isfinite(rr) && rr > 0.0 && std::isfinite(medRR) && rr < 1.5 * medRR) {
+                    const int next = s.pLo + static_cast<int>(std::lround(rr * ecgFs));
+                    s.nextPLo = std::min(next, static_cast<int>(beat.size()));
+                }
+
+                int motionFlag = -1;
+                if (accel && std::isfinite(t) && ecgFs > 0.0)
+                    motionFlag = accel->sqiMotionFlag(t - rawBlk.r_col / ecgFs,
+                        t + (static_cast<double>(beat.size()) - rawBlk.r_col) / ecgFs);
+
+                const BeatSQI q = computeEcgSQI(beat, rawBlk.ecgTemplate,
+                    absBlk.ecgTemplate, s, motionFlag, ecgFs);
                 f << bin << ',' << ch.key << ',' << bi << ','
                     << q.templateCorr << ',' << q.chiSq0 << ',' << q.chiSqAbs << ','
                     << q.chiSq0_P << ',' << q.chiSq0_QRS << ',' << q.chiSq0_ST << ','
+                    << q.chiSqAbs_P << ',' << q.chiSqAbs_QRS << ',' << q.chiSqAbs_ST << ','
                     << q.baseline << ',' << q.noise << ',' << q.motion << ','
                     << q.composite << ',' << included_levels[q.handling] << '\n';
             }

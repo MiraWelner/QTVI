@@ -67,7 +67,6 @@ namespace template_structs {
         int                   abp_r_col = -1;
         int                   art_r_col = -1;
         int                   art_pulm_r_col = -1;
-        bool                  bad_segment = false;
 
 
         std::array<tbank::TemplateBank, 3> ecg_bank;
@@ -96,7 +95,6 @@ namespace template_structs {
     };
 
     struct BeatsFile {
-        std::vector<bool> bad_segment;
         std::map<std::string, std::vector<std::vector<std::vector<double>>>> per_channel_beats;
         std::map<std::string, std::vector<int>> per_channel_ref_index;
         // Rhythm verdict per kept beat, [bin][beat], keyed like

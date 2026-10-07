@@ -38,6 +38,7 @@
 #include "fiducial_marker_finding/ppg_derivative.hpp"
 
 #include "logging/sqi_ecg.hpp"
+#include "logging/sqi_ppg.hpp"
 
 
 namespace analysis_job {
@@ -116,6 +117,11 @@ namespace analysis_job {
         // The ECG rate bins were cut at (the original .bin's ECG1 upsample
         // rate), to turn a spliced R position into recording seconds.
         double ecgRecRateHz = 0.0;
+        // Task G / Task A: the record's accelerometer (VM, motion flag,
+        // activity per epoch) and the PPG's ADC rails, both from the original
+        // data .bin. Empty / unknown when the record has none.
+        accel_pipeline::AccelResult accel;
+        sqi_ppg::AdcRails ppgRails;
     };
 
 
@@ -217,7 +223,6 @@ namespace analysis_job {
             d.ch1.raw = got[b][0];
             d.ch2.raw = got[b][3];
             d.ch3.raw = got[b][6];
-            d.bad_segment = (d.ch1.raw.empty() && !d.ppgMinAmps.empty());
         }
         stash = std::move(got);
         std::fprintf(stderr, "  [r-reload] override_morphology: R-peaks from %s (%zu rows): CH1 %zu peaks"
@@ -521,6 +526,27 @@ namespace analysis_job {
                         << nr.error << "; the per-beat noise columns will be blank\n";
                 }
             }
+            // ACCELEROMETER and PPG ADC RAILS, for the SQIs in finalize. Both
+            // from the original record; a failure leaves them empty and the
+            // SQIs fall back (no motion penalty, clipping scored as 1).
+            try {
+                job.accel = accel_pipeline::runAccelPipeline(
+                    accel_pipeline::readAccelFromBin(binPath.string()));
+                std::cerr << "  [accel] " << (job.accel.epochs.empty()
+                    ? std::string("no accelerometer in this record; no motion penalty in the SQIs")
+                    : std::to_string(job.accel.epochs.size()) + " epochs") << "\n";
+            }
+            catch (const std::exception& e) {
+                std::cerr << "  [accel] failed (" << e.what() << ")\n";
+                job.accel = accel_pipeline::AccelResult{};
+            }
+            try {
+                job.ppgRails = sqi_ppg::detectAdcRails(sqi_ppg::readPpgRecordFromBin(binPath.string()));
+            }
+            catch (const std::exception& e) {
+                std::cerr << "  [ppg rails] failed (" << e.what() << ")\n";
+                job.ppgRails = sqi_ppg::AdcRails{};
+            }
             std::cerr << "  [sleep] " << (job.sleep.present()
                 ? "staging found, epoch " + std::to_string(job.sleep.epoch_sec) + " s"
                 : std::string("no sleep staging in this record; pct_* columns blank")) << "\n";
@@ -605,7 +631,17 @@ namespace analysis_job {
 
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
             premark::runAll(job.beats, job.tmpl, job.rates.ecg, pol, job.cfg.training_log, job.stem);
-            writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK", job.tmpl, job.beats, job.samplingRate, pol);
+            const accel_pipeline::AccelResult* accel = job.accel.epochs.empty() ? nullptr : &job.accel;
+            writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK", job.tmpl, job.beats, job.samplingRate, pol,
+                &job.beatTimes, accel);
+            {
+                std::vector<std::vector<uint32_t>> ppgSliceOfRow(job.info.size());
+                for (size_t i = 0; i < job.info.size(); ++i)
+                    ppgSliceOfRow[i] = job.info[i].ppg_slice_of_row;
+                sqi_ppg::writePpgSQICsv(job.cfg, job.stem + "_R_PEAK", job.tmpl, job.beats,
+                    ppgSliceOfRow, job.peakResults, job.ecgRecRateHz, job.rates.ppg_lag_ms,
+                    job.ppgRails, accel);
+            }
         }
         catch (const std::exception& e) {
             job.error = e.what();

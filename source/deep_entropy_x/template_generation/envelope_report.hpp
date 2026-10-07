@@ -7,62 +7,6 @@
  *           <stem>_envelopes.csv   one row per (channel, bin, beat, segment)
  *           <stem>_envelopes.bin   the same rows, fixed-width binary
  *
- *         WHY THIS FILE EXISTS SEPARATELY FROM envelopes.hpp. That header is
- *         the measurement: it knows how to score one beat and how to keep a
- *         rolling window. It has no opinion about where beats come from, what
- *         order they are in, or where results go. This file supplies all three
- *         and is the only place that does, so a second consumer of Section 4.7
- *         (the Section 9.5 selector, when it exists) can reuse the tracker
- *         without inheriting a file format.
- *
- *         EVERY INTERMEDIATE IS REPORTED, not just the envelope outputs. The
- *         columns run from the segment bounds used, through the raw per-beat
- *         measures, through the pre-normalisation denominators (total spectral
- *         power, per-band power, per-level wavelet energy), to the rolling
- *         mean/sd/z that 9.5 consumes. A z-score is three divisions away from
- *         the waveform and every one of them can be wrong in a way that still
- *         produces a plausible number; the point of the wide file is that any
- *         reported value can be recomputed by hand from its own row.
- *
- *         THE LAYOUT IS DEFINED TWICE, HERE AND IN read_envelope_bin.py, and
- *         the two must be changed together. writeBin stamps sizeof(record) and
- *         the four compile-time constants into the file header precisely so
- *         that a mismatch is refused by both readers rather than striding
- *         wrongly through the payload and producing plausible numbers.
- *
- *         ------------------------------------------------------------------
- *         THE THREE THINGS THIS FILE DECIDES, all of which the spec leaves open
- *         ------------------------------------------------------------------
- *
- *         1. WHICH BEATS. template_io::BeatsFile::per_channel_beats -- the
- *            KEPT, aligned beats on each bin's shared NaN-padded axis. They are
- *            already co-registered to the bin's r_col, which is what makes one
- *            set of segment bounds valid for every beat in the bin. Beats
- *            dropped upstream (Tukey, unscorable) are absent, so a rolling
- *            window is a window over MEASURED beats and not over wall-clock
- *            time. That is the same convention RollingEnvelope already applies
- *            to NaN values, so the two agree.
- *
- *         2. WHERE THE SEGMENT BOUNDS COME FROM. Auto-detected on the bin's own
- *            averaged template (chN_raw.ecgTemplate, anchored at its r_col) via
- *            the same FeatureMarks finders bin_archive.hpp uses, for the same
- *            reason: at this pipeline stage no operator marks exist. So these
- *            envelopes describe AUTOMATIC segment boundaries. The bounds are
- *            written into every row rather than left implicit, so a later
- *            re-run against operator-marked bounds is comparable rather than
- *            merely different.
- *
- *            P HAS NO OFFSET FINDER, so the P span ends at the Q-onset. That
- *            includes the PR segment, which is flat baseline and drags the P
- *            wave's mean toward it -- stated here because it makes P's
- *            amplitude the trustworthy P measure and P's mean the weak one.
- *
- *         3. ORDER. Beats are pushed in bin order, and within a bin in stored
- *            order, per channel. A Tracker is a sequential object: fed out of
- *            order it returns numbers that are arithmetically correct and
- *            physiologically meaningless. So the bin loop here is deliberately
- *            SERIAL even though bin_archive's equivalent is parallel, and each
- *            channel gets its own Tracker rather than sharing one.
  */
 
 #include "envelopes.hpp"
@@ -258,7 +202,6 @@ namespace envelope_report {
 
         for (size_t b = 0; b < bins.size() && b < perBin.size(); ++b) {
             const template_structs::BinTemplates& bt = bins[b];
-            if (bt.bad_segment) continue;
 
             const template_structs::ChannelMethodTemplate* chs[kNumEcgCh] = {
                 &bt.ch1_raw, &bt.ch2_raw, &bt.ch3_raw };

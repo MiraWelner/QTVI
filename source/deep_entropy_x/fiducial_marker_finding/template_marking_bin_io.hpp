@@ -132,7 +132,6 @@ struct time_bin {
     uint64_t index = 0;
     std::vector<std::pair<uint64_t, uint64_t>> ppg_bin_indexs;
     std::vector<std::pair<uint64_t, uint64_t>> ecg_bin_indexs;
-    bool bad_segment = false;
     uint64_t ch1_n_beats_raw = 0;
     uint64_t ch2_n_beats_raw = 0;
     uint64_t ch3_n_beats_raw = 0;
@@ -483,7 +482,6 @@ inline std::vector<time_bin> binsFromTemplateFile(const template_structs::Templa
         auto& dst = bins[i];
 
         dst.index = static_cast<uint64_t>(i);
-        dst.bad_segment = src.bad_segment;
         dst.ch1_n_beats_raw = src.ch1_n_beats_raw;
         dst.ch2_n_beats_raw = src.ch2_n_beats_raw;
         dst.ch3_n_beats_raw = src.ch3_n_beats_raw;
@@ -1739,7 +1737,7 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
         for (int c = 0; c < 3; ++c) {
             std::vector<double> vals;
             for (const auto& b : bins) {
-                if (b.bad_segment || b.bad_r_ch[c]) continue;
+                if (b.bad_r_ch[c]) continue;
 
                 const std::vector<double>& ecg = b.chFor(c, AnchorType::R_PEAK).ecgTemplate_raw;
                 if (ecg.empty()) continue;
@@ -1774,7 +1772,6 @@ inline void writeTemplateMarkingsCsv(std::ostream& f,
             {
                 std::vector<double> vals;
                 for (const auto& b : bins) {
-                    if (b.bad_segment) continue;
                     if (checkPpgIssue && b.bad_ppg != 0) continue;
                     const auto& v = b.*trace;
                     const double fi = b.*footAuto;

@@ -43,8 +43,15 @@
 
 namespace cgm_selection {
 
-    inline std::string output_name(const std::string& patientId, const std::filesystem::path& cgmFile) {
-        // <patientID>_<CGM file stem>.bin
+    /// Bittium .bin stem up to the first '_', or the whole stem.
+    inline std::string patientIdFromBinStem(const std::string& stem) {
+        const std::size_t u = stem.find('_');
+        return (u == std::string::npos || u == 0) ? stem : stem.substr(0, u);
+    }
+
+    /// <patientID>_<CGM file stem>.bin
+    inline std::string outputName(const std::string& patientId,
+        const std::filesystem::path& cgmFile) {
         return patientId + "_" + cgmFile.stem().string() + ".bin";
     }
 
@@ -72,7 +79,7 @@ namespace cgm_selection {
         for (const auto& b : R.result.bins) R.nValidBins += b.raw.valid ? 1 : 0;
         R.file = cgm_bin_io::makeCgmBinFile(R.result, params);
 
-        R.output = outDir / output_name(patientId, cgmFile);
+        R.output = outDir / outputName(patientId, cgmFile);
         if (!cgm_bin_io::writeCgmBin(R.output.string(), R.file)) {
             R.error = "cannot write " + R.output.string();
             return R;
@@ -97,12 +104,13 @@ namespace cgm_selection {
             return 0;
         }
 
+        const std::string id = patientIdFromBinStem(binStem);
         const QStringList picked = QFileDialog::getOpenFileNames(
-            nullptr, QString::fromStdString("Select CGM files for " + binStem),
+            nullptr, QString::fromStdString("Select CGM files for " + id),
             QString::fromStdString(cfg.cgm_folder),
             "CGM exports (*.csv);;All files (*)");
         if (picked.isEmpty()) {
-            std::cout << "  [cgm] no CGM files selected for " << binStem << "\n";
+            std::cout << "  [cgm] no CGM files selected for " << id << "\n";
             return 0;
         }
 
@@ -113,7 +121,19 @@ namespace cgm_selection {
         for (const QString& q : picked) {
             const std::filesystem::path in = q.toStdString();
             const auto R = processCgmFile(id, in, cfg.cgm_output_path, params);
+            if (!R.written) {
+                std::cerr << "  [cgm] " << in.filename().string() << ": " << R.error << "; skipped\n";
+                continue;
+            }
             const auto& res = R.result;
+            std::cout << "  [cgm] " << in.filename().string() << ": "
+                << R.nReadings << " readings, "
+                << res.nWarmupDropped << " warm-up dropped, "
+                << res.nOutOfRange << " out of range, "
+                << res.nCompression << " compression, "
+                << res.nInterpolated << " interpolated; "
+                << R.nValidBins << "/" << res.bins.size() << " bins valid -> "
+                << R.output.filename().string() << "\n";
             ++written;
         }
         return written;

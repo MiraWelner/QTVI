@@ -64,10 +64,8 @@ namespace template_generation_detail {
     }
 
     inline void packBin(template_structs::BinTemplates& bt,
-        const TemplateInfo& info, bool bad_segment)
+        const TemplateInfo& info)
     {
-        bt.bad_segment = bad_segment;
-        if (bad_segment) return;
 
         // Only the raw methods carry std; the other three pass an empty
         // vector via the default-constructed std::vector<double>{}.
@@ -117,10 +115,8 @@ namespace template_generation_detail {
     // FAST pack: raw + unfiltered ECG blocks + PPG. Leaves the squared and
     // absval blocks default-empty for packBinSlow.
     inline void packBinFast(template_structs::BinTemplates& bt,
-        const TemplateInfo& info, bool bad_segment)
+        const TemplateInfo& info)
     {
-        bt.bad_segment = bad_segment;
-        if (bad_segment) return;
 
         copyMethod(bt.ch1_raw, info.ch1.ecgTemplate_raw, info.ch1.ecg_template_raw_std, info.ch1.r_col_raw);
         copyMethod(bt.ch1_unfiltered, info.ch1.ecgTemplate_unfiltered, {}, info.ch1.r_col_unfiltered);
@@ -161,7 +157,6 @@ namespace template_generation_detail {
     inline void packBinSlow(template_structs::BinTemplates& bt,
         const TemplateInfo& info)
     {
-        if (bt.bad_segment) return;
         const std::vector<double> noStd;
         copyMethod(bt.ch1_squared, info.ch1.ecgTemplate_squared, noStd, info.ch1.r_col_squared);
         copyMethod(bt.ch1_absval, info.ch1.ecgTemplate_absval, noStd, info.ch1.r_col_absval);
@@ -201,9 +196,8 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
 
     out.tmpl.bins.resize(peakResults.size());
     for (size_t i = 0; i < peakResults.size(); ++i) {
-        bool bad = peakResults[i].bad_segment;
         const TemplateInfo& info = (i < out.info.size()) ? out.info[i] : TemplateInfo{};
-        packBinFast(out.tmpl.bins[i], info, bad);
+        packBinFast(out.tmpl.bins[i], info);
     }
 
     // Arterial background-context templates (ABP / ART / ART_PULM). All
@@ -230,7 +224,6 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
         if (rates.art > 0.0)     ptt_log::stashTransit("ART", art.ptt);
         if (rates.artPulm > 0.0) ptt_log::stashTransit("ART_PULM", artp.ptt);
         for (size_t i = 0; i < out.tmpl.bins.size(); ++i) {
-            if (out.tmpl.bins[i].bad_segment) continue;
             // THE R COLUMN TRAVELS WITH THE WAVEFORM. Each arterial channel
             // has its own rate and its own beat survivors, so each measures
             // its own -- they are NOT interchangeable, and they are not
@@ -260,8 +253,7 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
             auto& dst = out.beats.per_channel_beats[name];
             if (dst.size() < r.kept.size()) dst.resize(r.kept.size());
             for (size_t i = 0; i < r.kept.size(); ++i)
-                if (i >= out.tmpl.bins.size() || !out.tmpl.bins[i].bad_segment)
-                    dst[i] = std::move(r.kept[i]);
+                dst[i] = std::move(r.kept[i]);
             };
         stashArt("ABP", abp);
         stashArt("ART", art);
@@ -271,7 +263,6 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
     // Beats: assemble per-channel retained snips (CH1/CH2/CH3/PPG from the
     // TemplateInfo map; arterial channels already stashed above) so every
     const size_t nb = out.info.size();
-    out.beats.bad_segment.resize(nb, false);
     auto ensureBins = [&](const std::string& ch)
         -> std::vector<std::vector<std::vector<double>>>&{
         auto& v = out.beats.per_channel_beats[ch];
@@ -279,9 +270,6 @@ buildTemplatesAndBeatsFast(const std::vector<output_binfile_data>& peakResults,
         return v;
         };
     for (size_t i = 0; i < nb; ++i) {
-        out.beats.bad_segment[i] = (i < peakResults.size())
-            ? peakResults[i].bad_segment : false;
-        if (out.beats.bad_segment[i]) continue;
         for (auto& kv : out.info[i].kept_beats_by_channel)
             ensureBins(kv.first)[i] = std::move(kv.second);
         for (auto& kv : out.info[i].kept_rhythm_by_channel) {
@@ -379,7 +367,6 @@ inline void alignTemplatesFromCache(template_structs::TemplateFile& tmpl, templa
 #endif
         for (int i = 0; i < nBins; ++i) {
             template_structs::BinTemplates& bin = tmpl.bins[i];
-            if (bin.bad_segment) continue;
             if ((size_t)i >= perBin.size() || perBin[i].empty()) continue;
 
             // The R base (blk) is the reference every anchor aligns FROM; it

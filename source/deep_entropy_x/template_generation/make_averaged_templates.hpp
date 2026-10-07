@@ -404,9 +404,9 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
         // ECG quality is independent of PPG availability. Previously this
         // function gated ECG fill on ppg_template_good, which cleared the
         // ECG templates for every bin of datasets without PPG (Bittium).
-        // The top-of-file comment block documents the correct gate as
-        // bad_segment, so we use that here.
-        const bool ecg_good = (i < wave_data.size()) && !wave_data[i].bad_segment;
+        // A bin with too few lead-1 R peaks is skipped by the nR >= 2 test
+        // below.
+        const bool ecg_good = (i < wave_data.size());
 
         // THE THREE ECG LEADS, BY INDEX. Every per-channel step below is the
         // same six statements three times over, and writing them out invited
@@ -700,7 +700,6 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
     // these rows. See bank_reload.hpp.
     std::vector<uint64_t> slicingFp(n, 0);
     for (size_t i = 0; i < n; ++i) {
-        if (wave_data[i].bad_segment) continue;
         std::array<const std::vector<size_t>*, 3> ek{ { nullptr, nullptr, nullptr } };
         for (int c = 0; c < 3; ++c)
             if (i < ecg_res.kept_index[c].size()) ek[c] = &ecg_res.kept_index[c][i];
@@ -890,9 +889,7 @@ inline vector<TemplateInfo> GenerateTemplatesFast(const vector<output_binfile_da
 }
 
 // SLOW: fill the squared/absval ECG templates onto an existing
-// vector<TemplateInfo> produced by GenerateTemplatesFast. Applies the same
-// bad_segment gate as the fast pass, so squared/absval stay empty on bins
-// the fast pass cleared.
+// vector<TemplateInfo> produced by GenerateTemplatesFast.
 inline void AugmentTemplatesSlow(const vector<output_binfile_data>& wave_data,
     vector<TemplateInfo>& templates,
     const SignalRates& rates)
@@ -913,8 +910,7 @@ inline void AugmentTemplatesSlow(const vector<output_binfile_data>& wave_data,
         };
 
     for (size_t i = 0; i < n && i < templates.size(); ++i) {
-        const bool ecg_good = (i < wave_data.size()) && !wave_data[i].bad_segment;
-        if (!ecg_good) continue;
+        if (i >= wave_data.size()) continue;
         fill_slow(templates[i].ch1, ecg_res.ch1, i);
         fill_slow(templates[i].ch2, ecg_res.ch2, i);
         fill_slow(templates[i].ch3, ecg_res.ch3, i);

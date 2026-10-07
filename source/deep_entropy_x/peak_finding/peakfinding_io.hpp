@@ -747,8 +747,7 @@ inline std::vector<output_binfile_data> read_output_binfile(const std::string& p
  *         (already loaded by the single-arg overload above).
  *
  *         The bin count in the two files must match; otherwise this
- *         throws. bad_segment is not on disk in either file -- it stays
- *         false on the rebuild path, matching the previous behaviour.
+ *         throws.
  *
  * @param  wavePath       Path to the wave_markings .bin.
  * @param  annealedPath   Path to the matching annealed .bin.
