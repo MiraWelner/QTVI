@@ -778,25 +778,6 @@ namespace analysis_job {
         return "OPERATOR";
     }
 
-    // A template's name, built exactly as the viewer titles its panel: the
-    // class (PQRST until an operator confirms one), "_", and the letter
-    // tbank::letterRanks assigns -- one template, one name everywhere.
-    inline std::string templateName(const tbank::TemplateBank& bank, int t,
-        const std::vector<uint8_t>& letters)
-    {
-        if (t < 0 || t >= bank.size()) return {};
-        std::string cls = "PQRST";
-        switch (bank.templates[t].label_code) {
-        case tbank::kUnlabeled:        break;
-        case tbank::kCodePvc:          cls = "PVC";   break;
-        case tbank::kCodePac:          cls = "PAC";   break;
-        case tbank::kCodeVt:           cls = "VT";    break;
-        case tbank::kCodeMinorNoise:   cls = "NOISE"; break;
-        default: cls = "CODE" + std::to_string(bank.templates[t].label_code); break;
-        }
-        const int letterIdx = (static_cast<std::size_t>(t) < letters.size()) ? letters[t] : 0;
-        return cls + "_" + static_cast<char>('A' + (letterIdx % 26));
-    }
 
     inline BeatColumns buildBeatMoveColumns(const AnalysisJob& job)
     {
@@ -878,7 +859,7 @@ namespace analysis_job {
                     rowState = rowStateOf(bank);
                     const std::vector<uint8_t> letters = tbank::letterRanks(bank);
                     for (int t = 0; t < bank.size(); ++t) {
-                        const std::string nm = templateName(bank, t, letters);
+                        const std::string nm = tbank::templateName(bank, t, letters);
                         for (const uint32_t m : bank.templates[t].members) {
                             if (m >= nameOf.size()) nameOf.resize(m + 1);
                             nameOf[m] = nm;
@@ -1043,7 +1024,7 @@ namespace analysis_job {
             for (int t = 0; t < bank.size(); ++t) {
                 const tbank::template_of_all_signals& slot = bank.templates[t];
                 if (slot.tmpl.empty()) continue;
-                const std::string nm = templateName(bank, t, letters);
+                const std::string nm = tbank::templateName(bank, t, letters);
                 const std::vector<uint32_t>& cohort = !slot.members_clean.empty()
                     ? slot.members_clean : slot.members;
                 const tbank::PulseVariant& F = slot.pulseVariant(tbank::PulseAnchor::Foot);

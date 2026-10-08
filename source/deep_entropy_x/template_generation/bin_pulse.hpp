@@ -17,7 +17,7 @@
 #include <algorithm>
 #include <cmath>
 #include <vector>
-#include "stats_utils.hpp"   // pearson, the shared primitive
+#include "../stats_utils.hpp"   // pearson, the shared primitive
 #include "fiducial_marker_finding/alignment.hpp"
 #include "template_generation/normalize_template_amplitude.hpp"
 #include "logging/ptt_logging.hpp"

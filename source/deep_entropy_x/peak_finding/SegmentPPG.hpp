@@ -8,10 +8,10 @@
  */
 #pragma once
 
-#include "nanfastsmooth.hpp"
-#include "stats_utils.hpp"
-#include "peak_finding//stdoutlier.hpp"
-#include "RunLength.hpp"
+#include "../peak_finding/nanfastsmooth.hpp"
+#include "../stats_utils.hpp"
+#include "../peak_finding/stdoutlier.hpp"
+#include "../peak_finding/RunLength.hpp"
 #include <stdexcept>
 #include <cmath>
 #include <algorithm>

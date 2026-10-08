@@ -2,8 +2,9 @@
 /**
  * @file   sqi_ecg.hpp
  * @brief  Per-beat ECG Signal Quality Index (SQI), scored against the
- *         bin/channel's own median template (and absolute-value template)
- *         that the template-generation pipeline already builds.
+ *         beat's OWN TEMPLATE -- the bank slot whose members hold it -- as
+ *         that template's median and absolute-value median, never against a
+ *         bin-wide average.
  *
  *         Wiring: writeEcgSQICsv() is called from analysis_job::finalize()
  *         right after mergeTemplatesSlow() has produced the canonical
@@ -12,7 +13,8 @@
  *
  *         Segment boundaries (P/QRS/ST) are derived from FeatureMarks'
  *         existing auto-detectors -- the same ones that seed the viewer's
- *         movable markers -- anchored on the bin/channel's own r_col.
+ *         movable markers -- run on each template's own median, anchored on
+ *         the scored beat matrix's r_col.
  *         The one boundary FeatureMarks doesn't expose directly (P onset)
  *         is estimated here; search "ASSUMPTION" below if that needs
  *         tightening.
@@ -170,14 +172,14 @@ inline double stddevSQI(const std::vector<double>& v, int lo, int hi) {
 }
 
 inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
-    const std::vector<double>& tmpl,      // median template, same length as beat
-    const std::vector<double>& tmplAbs,   // absolute-value template
+    const std::vector<double>& tmpl,      // the beat's own template's median, same frame
+    const std::vector<double>& tmplAbs,   // that template's median of |beat|
     const Segments& seg,                  // P/QRS/ST sample ranges
     int motionFlag,
     double fs) {
     BeatSQI q{};
     q.templateCorr = std::max(0.0, pearsonSQI(beat, tmpl));   // whole beat, 0..1
-    // Against tmplAbs (the median of |beat| over the bin) the beat is compared
+    // Against tmplAbs (the median of |beat| over the template) the beat is compared
     // as |beat| too, so a beat identical to the template scores 0 on both.
     // Comparing the signed beat with the all-positive tmplAbs (the spec's code
     // as written) would score every negative deflection as a mismatch.
@@ -226,9 +228,30 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
 }
 
 // ---------------------------------------------------------------------
-// File-level driver: scores every kept beat, on every ECG channel, in
-// every bin, against that bin/channel's own raw + absval templates, and
-// writes one row per beat to <cfg.training_log>/<stem>_quality.csv.
+// File-level driver: scores every beat against ITS OWN TEMPLATE -- the bank
+// slot (ecg_bank[lead].templates[slot]) whose members hold the beat -- and
+// writes one row per beat to <cfg.logs>/<stem>_quality.csv.
+//
+// PER TEMPLATE, NOT PER BIN. A bin can hold several morphologies (sinus, a
+// PVC family, ...); scoring a PVC against the bin-wide median scored it
+// against sinus, so every ectopic beat read as poor quality for being
+// ectopic. Each template is now its own reference: its median and |x|
+// median, its P/QRS/ST segments, and its R-R plausibility bound are all
+// taken over that template's rows alone.
+//
+// THE REFERENCE IS REBUILT FROM THE SCORED MATRIX. per_channel_beats[CHc][bin]
+// holds the beats aligned to the scoring anchor (build_bins, forScoring), and
+// bank members are local rows of exactly that matrix. The reference is the
+// column median of the template's AVERAGED rows (members_clean, else members)
+// over that matrix -- so beat and template are co-framed by construction, and
+// rawBlk.r_col (the matrix's R column, shared by every row) anchors the
+// segments. The bank's own tmpl is not used: it was built before the anchor
+// alignment and is in a different frame.
+//
+// WHICH ROWS ARE SCORED. Every member of a template, including members its
+// fences left out of the average (in_template_average = 0), so the quality of
+// an excluded beat is still on record. A row that no template claims
+// (UNSCORABLE / SPAWN_LIMIT) has no reference and is not written.
 //
 // Called from analysis_job::finalize() once job.tmpl/job.beats are final.
 // `pol` is built there from the job's per-channel inversion flags.
@@ -238,8 +261,10 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
 //     time t; the accelerometer answers 1 clean / 0 motion for that span, -1
 //     with no accelerometer or no time.
 //   * next P onset: this beat's pLo moved on by the R-R interval to the next
-//     kept row, when that interval is plausible (under 1.5x the bin's median,
-//     so a pruned beat in between does not stretch it); else unknown.
+//     kept row, when that interval is plausible (under 1.5x the TEMPLATE's
+//     median such interval, so a pruned beat in between does not stretch it);
+//     else unknown. The next row may belong to another template -- it is the
+//     next beat in time, which is what closes the TP segment.
 // ---------------------------------------------------------------------
 inline void writeEcgSQICsv(const config_entry& cfg,
     const std::string& stem,
@@ -256,87 +281,113 @@ inline void writeEcgSQICsv(const config_entry& cfg,
         return;
     }
 
-    f << "bin,channel,beat,template_corr,chiSq0,chiSqAbs,chiSq0_P,chiSq0_QRS,chiSq0_ST,"
+    f << "bin,channel,template,slot,beat,in_template_average,"
+        "template_corr,chiSq0,chiSqAbs,chiSq0_P,chiSq0_QRS,chiSq0_ST,"
         "chiSqAbs_P,chiSqAbs_QRS,chiSqAbs_ST,baseline,noise,motion,composite,is_included\n";
 
     // `lead` IS IN THE TABLE, not derived from the loop. The loop below is a
     // range-for over this array, so there is no counter to index pol with --
     // and adding one alongside would be a second thing to keep in step with
-    // the key. One row, one channel, one polarity index.
+    // the key. One row, one channel, one polarity index (and one bank index).
     struct ChannelSpec {
         const char* key;
-        int lead;   // index into LeadPolarity; must match key
+        int lead;   // index into LeadPolarity and ecg_bank; must match key
         template_structs::ChannelMethodTemplate template_structs::BinTemplates::* raw;
-        template_structs::ChannelMethodTemplate template_structs::BinTemplates::* absval;
     };
     const ChannelSpec channels[] = {
-        { "CH1", 0, &template_structs::BinTemplates::ch1_raw, &template_structs::BinTemplates::ch1_absval },
-        { "CH2", 1, &template_structs::BinTemplates::ch2_raw, &template_structs::BinTemplates::ch2_absval },
-        { "CH3", 2, &template_structs::BinTemplates::ch3_raw, &template_structs::BinTemplates::ch3_absval },
+        { "CH1", 0, &template_structs::BinTemplates::ch1_raw },
+        { "CH2", 1, &template_structs::BinTemplates::ch2_raw },
+        { "CH3", 2, &template_structs::BinTemplates::ch3_raw },
     };
     static const char* const included_levels[] = { "INCLUDE", "SUBSTITUTE", "EXCLUDE" };
-
+    constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
     for (size_t bin = 0; bin < tmpl.bins.size(); ++bin) {
         const auto& bt = tmpl.bins[bin];
 
         for (const ChannelSpec& ch : channels) {
-            const auto& rawBlk = bt.*ch.raw;
-            const auto& absBlk = bt.*ch.absval;
-            if (rawBlk.ecgTemplate.empty() || rawBlk.r_col < 0) continue;
+            // The matrix's R column. Every row of the scored matrix shares it,
+            // so it is every template's R column too.
+            const int rCol = (bt.*ch.raw).r_col;
+            if (rCol < 0) continue;
 
             const auto it = beats.per_channel_beats.find(ch.key);
             if (it == beats.per_channel_beats.end() || bin >= it->second.size()) continue;
-            const auto& binBeats = it->second[bin];   // [beat][sample]
+            const auto& binBeats = it->second[bin];   // [row][sample]
             if (binBeats.empty()) continue;
 
-            const Segments seg = buildSegments(rawBlk.ecgTemplate, rawBlk.r_col, ecgFs,
-                pol.sign(ch.lead));
+            const tbank::TemplateBank& bank = bt.ecg_bank[ch.lead];
+            if (bank.templates.empty()) continue;
+            const std::vector<uint8_t> letters = tbank::letterRanks(bank);
 
-            // R time of each kept row, and the bin's median R-R between
-            // consecutive rows, for the next-P-onset bound.
             auto tAt = [&](size_t row) {
-                return times ? times->at(ch.lead, bin, static_cast<uint32_t>(row))
-                    : std::numeric_limits<double>::quiet_NaN();
+                return times ? times->at(ch.lead, bin, static_cast<uint32_t>(row)) : kNaN;
                 };
-            double medRR = std::numeric_limits<double>::quiet_NaN();
-            {
-                std::vector<double> rr;
-                for (size_t bi = 0; bi + 1 < binBeats.size(); ++bi) {
-                    const double d = tAt(bi + 1) - tAt(bi);
-                    if (std::isfinite(d) && d > 0.0) rr.push_back(d);
+            // R-R from a row to the next kept row; NaN where unknown.
+            auto rrAfter = [&](size_t row) {
+                return (row + 1 < binBeats.size()) ? tAt(row + 1) - tAt(row) : kNaN;
+                };
+
+            for (int slot = 0; slot < bank.size(); ++slot) {
+                const tbank::template_of_all_signals& tp = bank.templates[slot];
+                if (tp.members.empty()) continue;
+
+                // THIS template's references, over its averaged rows.
+                const std::vector<uint32_t>& avgRows = tbank::averagedRows(tp);
+                const std::vector<double> ref = tbank::rowMedian(binBeats, avgRows, false);
+                const std::vector<double> refAbs = tbank::rowMedian(binBeats, avgRows, true);
+                if (ref.empty() || rCol >= static_cast<int>(ref.size())) continue;
+
+                const Segments seg = buildSegments(ref, rCol, ecgFs, pol.sign(ch.lead));
+                const std::string name = tbank::templateName(bank, slot, letters);
+
+                std::vector<uint32_t> rows = tp.members;
+                std::sort(rows.begin(), rows.end());
+                rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+                std::vector<char> averaged(binBeats.size(), 0);
+                for (const uint32_t r : avgRows) if (r < averaged.size()) averaged[r] = 1;
+
+                // The template's median R-R to the next beat, over its members.
+                double medRR = kNaN;
+                {
+                    std::vector<double> rr;
+                    for (const uint32_t r : rows) {
+                        const double d = rrAfter(r);
+                        if (std::isfinite(d) && d > 0.0) rr.push_back(d);
+                    }
+                    if (!rr.empty()) {
+                        std::nth_element(rr.begin(), rr.begin() + rr.size() / 2, rr.end());
+                        medRR = rr[rr.size() / 2];
+                    }
                 }
-                if (!rr.empty()) {
-                    std::nth_element(rr.begin(), rr.begin() + rr.size() / 2, rr.end());
-                    medRR = rr[rr.size() / 2];
+
+                for (const uint32_t bi : rows) {
+                    if (bi >= binBeats.size()) continue;   // stale index: drop, never clamp
+                    const std::vector<double>& beat = binBeats[bi];
+                    if (beat.empty()) continue;
+                    const double t = tAt(bi);
+
+                    Segments s = seg;
+                    const double rr = rrAfter(bi);
+                    if (std::isfinite(rr) && rr > 0.0 && std::isfinite(medRR) && rr < 1.5 * medRR) {
+                        const int next = s.pLo + static_cast<int>(std::lround(rr * ecgFs));
+                        s.nextPLo = std::min(next, static_cast<int>(beat.size()));
+                    }
+
+                    int motionFlag = -1;
+                    if (accel && std::isfinite(t) && ecgFs > 0.0)
+                        motionFlag = accel->sqiMotionFlag(t - rCol / ecgFs,
+                            t + (static_cast<double>(beat.size()) - rCol) / ecgFs);
+
+                    const BeatSQI q = computeEcgSQI(beat, ref, refAbs, s, motionFlag, ecgFs);
+                    f << bin << ',' << ch.key << ',' << name << ',' << slot << ',' << bi << ','
+                        << int(averaged[bi]) << ','
+                        << q.templateCorr << ',' << q.chiSq0 << ',' << q.chiSqAbs << ','
+                        << q.chiSq0_P << ',' << q.chiSq0_QRS << ',' << q.chiSq0_ST << ','
+                        << q.chiSqAbs_P << ',' << q.chiSqAbs_QRS << ',' << q.chiSqAbs_ST << ','
+                        << q.baseline << ',' << q.noise << ',' << q.motion << ','
+                        << q.composite << ',' << included_levels[q.handling] << '\n';
                 }
-            }
-
-            for (size_t bi = 0; bi < binBeats.size(); ++bi) {
-                const std::vector<double>& beat = binBeats[bi];
-                const double t = tAt(bi);
-
-                Segments s = seg;
-                const double rr = (bi + 1 < binBeats.size()) ? tAt(bi + 1) - t
-                    : std::numeric_limits<double>::quiet_NaN();
-                if (std::isfinite(rr) && rr > 0.0 && std::isfinite(medRR) && rr < 1.5 * medRR) {
-                    const int next = s.pLo + static_cast<int>(std::lround(rr * ecgFs));
-                    s.nextPLo = std::min(next, static_cast<int>(beat.size()));
-                }
-
-                int motionFlag = -1;
-                if (accel && std::isfinite(t) && ecgFs > 0.0)
-                    motionFlag = accel->sqiMotionFlag(t - rawBlk.r_col / ecgFs,
-                        t + (static_cast<double>(beat.size()) - rawBlk.r_col) / ecgFs);
-
-                const BeatSQI q = computeEcgSQI(beat, rawBlk.ecgTemplate,
-                    absBlk.ecgTemplate, s, motionFlag, ecgFs);
-                f << bin << ',' << ch.key << ',' << bi << ','
-                    << q.templateCorr << ',' << q.chiSq0 << ',' << q.chiSqAbs << ','
-                    << q.chiSq0_P << ',' << q.chiSq0_QRS << ',' << q.chiSq0_ST << ','
-                    << q.chiSqAbs_P << ',' << q.chiSqAbs_QRS << ',' << q.chiSqAbs_ST << ','
-                    << q.baseline << ',' << q.noise << ',' << q.motion << ','
-                    << q.composite << ',' << included_levels[q.handling] << '\n';
             }
         }
     }

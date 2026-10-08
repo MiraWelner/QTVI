@@ -807,6 +807,68 @@ namespace tbank {
         return letter;
     }
 
+    // A template's name, built exactly as the viewer titles its panel: the
+    // class (PQRST until an operator confirms one), "_", and the letter
+    // letterRanks assigns -- one template, one name everywhere. Moved here
+    // from analysis_job.hpp so the SQI writers, which analysis_job includes,
+    // can name the template a row was scored against.
+    inline std::string templateName(const TemplateBank& bank, int t,
+        const std::vector<uint8_t>& letters)
+    {
+        if (t < 0 || t >= bank.size()) return {};
+        std::string cls = "PQRST";
+        switch (bank.templates[t].label_code) {
+        case kUnlabeled:        break;
+        case kCodePvc:          cls = "PVC";   break;
+        case kCodePac:          cls = "PAC";   break;
+        case kCodeVt:           cls = "VT";    break;
+        case kCodeMinorNoise:   cls = "NOISE"; break;
+        default: cls = "CODE" + std::to_string(bank.templates[t].label_code); break;
+        }
+        const int letterIdx = (static_cast<std::size_t>(t) < letters.size()) ? letters[t] : 0;
+        return cls + "_" + static_cast<char>('A' + (letterIdx % 26));
+    }
+
+    // The rows a template AVERAGES: members_clean, else every member (an
+    // empty members_clean means nothing was excluded). The same rule
+    // build_bins, ppg_realign and analysis_job's verdicts already use.
+    inline const std::vector<uint32_t>& averagedRows(const template_of_all_signals& t) {
+        return t.members_clean.empty() ? t.members : t.members_clean;
+    }
+
+    // Column-wise NaN-skipping median of beats[r] over `rows`, of |x| when
+    // absval. Width is the longest row taken part. An out-of-range row is
+    // SKIPPED, not clamped -- a stale index must drop a beat, not average the
+    // wrong one. Empty when no row contributed.
+    inline std::vector<double> rowMedian(const std::vector<std::vector<double>>& beats,
+        const std::vector<uint32_t>& rows, bool absval = false)
+    {
+        std::size_t W = 0;
+        for (const uint32_t r : rows) if (r < beats.size()) W = std::max(W, beats[r].size());
+        if (W == 0) return {};
+        std::vector<double> out(W, std::numeric_limits<double>::quiet_NaN());
+        std::vector<double> col;
+        col.reserve(rows.size());
+        bool any = false;
+        for (std::size_t c = 0; c < W; ++c) {
+            col.clear();
+            for (const uint32_t r : rows) {
+                if (r >= beats.size() || c >= beats[r].size()) continue;
+                const double v = beats[r][c];
+                if (!std::isnan(v)) col.push_back(absval ? std::abs(v) : v);
+            }
+            if (col.empty()) continue;
+            const std::size_t m = col.size() / 2;
+            std::nth_element(col.begin(), col.begin() + m, col.end());
+            const double hi = col[m];
+            out[c] = (col.size() % 2) ? hi
+                : 0.5 * (*std::max_element(col.begin(), col.begin() + m) + hi);
+            any = true;
+        }
+        if (!any) out.clear();
+        return out;
+    }
+
     // =====================================================================
     // SCORING PRIMITIVES
     // =====================================================================

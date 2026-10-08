@@ -6,8 +6,9 @@
  *         The PPG needs its own index: motion corrupts it more readily than
  *         the ECG, and the ADC clips during strong pulses. Four components:
  *
- *           templateCorr  Pearson r of the pulse against the bin's PPG
- *                         template, both resampled to 200 samples (cubic) so
+ *           templateCorr  Pearson r of the pulse against its OWN PPG
+ *                         template (the ppg_bank slot holding it), both
+ *                         resampled to 200 samples (cubic) so
  *                         pulses of different duration are comparable.
  *           chiSq         chi-squared distance against the same template,
  *                         0 = identical shape, 1 = maximally different.
@@ -233,8 +234,17 @@ namespace sqi_ppg {
 
     // ---- File-level driver ------------------------------------------------
     //
-    // Scores every kept pulse in every bin against that bin's PPG template and
-    // writes one row per pulse to <cfg.training_log>/<stem>_ppg_quality.csv.
+    // Scores every pulse against ITS OWN TEMPLATE -- the ppg_bank slot whose
+    // members hold it -- and writes one row per pulse to
+    // <cfg.logs>/<stem>_ppg_quality.csv.
+    //
+    // PER TEMPLATE, NOT PER BIN. The reference is the column median of the
+    // template's averaged rows (members_clean, else members) of the bin's
+    // pulse matrix, per_channel_beats["PPG"][bin] -- the row space ppg_bank
+    // members index -- resampled to 200 samples. bt.ppgTemplate, the bin-wide
+    // average, is no longer read here. Every member is scored, including ones
+    // the fences left out of the average (in_template_average = 0); a pulse
+    // no template claims has no reference and is not written.
     //
     // A pulse's window is its R-pair: [R(s) + lag, R(s+1) + lag], s being the
     // pulse row's R-pair ordinal (ppg_slice_of_row) -- the same window the
@@ -259,16 +269,17 @@ namespace sqi_ppg {
             std::cerr << "  WARNING: could not open " << outPath << " for PPG SQI output\n";
             return;
         }
-        f << "bin,beat,template_corr,chi_sq,clipping,motion,composite,is_included,exclusion_reason\n";
+        f << "bin,template,slot,beat,in_template_average,"
+            "template_corr,chi_sq,clipping,motion,composite,is_included,exclusion_reason\n";
         if (!rails.known())
             std::cerr << "  [ppg sqi] no ADC rails for " << stem << "; clipping scored as 1\n";
 
         const double lagS = ppgLagMs / 1000.0;
         for (std::size_t bin = 0; bin < tmpl.bins.size() && bin < it->second.size(); ++bin) {
-            const auto& bt = tmpl.bins[bin];
-            if (bt.ppgTemplate.empty()) continue;
-            const std::vector<double> tmpl200 = resampleTo(bt.ppgTemplate, kPulseSamples);
-            if (tmpl200.empty()) continue;
+            const tbank::TemplateBank& bank = tmpl.bins[bin].ppg_bank;
+            const auto& pulses = it->second[bin];   // [row][sample]
+            if (bank.templates.empty() || pulses.empty()) continue;
+            const std::vector<uint8_t> letters = tbank::letterRanks(bank);
 
             // Recording seconds of R-pair s, NaN if unknown.
             const output_binfile_data* pr = bin < peakResults.size() ? &peakResults[bin] : nullptr;
@@ -291,14 +302,32 @@ namespace sqi_ppg {
                 return std::isfinite(frac) ? frac : 0.0;           // no coverage: no penalty
                 };
 
-            const auto& pulses = it->second[bin];   // [beat][sample]
-            for (std::size_t bi = 0; bi < pulses.size(); ++bi) {
-                if (pulses[bi].empty()) continue;
-                const PulseSQI q = computePpgSQI(pulses[bi], tmpl200,
-                    rails.loThreshold(), rails.hiThreshold(), motionOf(bi));
-                f << bin << ',' << bi << ',' << q.templateCorr << ',' << q.chiSq << ','
-                    << q.clipping << ',' << q.motion << ',' << q.composite << ','
-                    << (q.include ? "INCLUDE" : "EXCLUDE") << ',' << exclusionReason(q) << '\n';
+            for (int slot = 0; slot < bank.size(); ++slot) {
+                const tbank::template_of_all_signals& tp = bank.templates[slot];
+                if (tp.members.empty()) continue;
+
+                const std::vector<uint32_t>& avgRows = tbank::averagedRows(tp);
+                const std::vector<double> tmpl200 =
+                    resampleTo(tbank::rowMedian(pulses, avgRows), kPulseSamples);
+                if (tmpl200.empty()) continue;
+                const std::string name = tbank::templateName(bank, slot, letters);
+
+                std::vector<uint32_t> rows = tp.members;
+                std::sort(rows.begin(), rows.end());
+                rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+                std::vector<char> averaged(pulses.size(), 0);
+                for (const uint32_t r : avgRows) if (r < averaged.size()) averaged[r] = 1;
+
+                for (const uint32_t bi : rows) {
+                    if (bi >= pulses.size() || pulses[bi].empty()) continue;   // stale: drop
+                    const PulseSQI q = computePpgSQI(pulses[bi], tmpl200,
+                        rails.loThreshold(), rails.hiThreshold(), motionOf(bi));
+                    f << bin << ',' << name << ',' << slot << ',' << bi << ','
+                        << int(averaged[bi]) << ','
+                        << q.templateCorr << ',' << q.chiSq << ','
+                        << q.clipping << ',' << q.motion << ',' << q.composite << ','
+                        << (q.include ? "INCLUDE" : "EXCLUDE") << ',' << exclusionReason(q) << '\n';
+                }
             }
         }
     }

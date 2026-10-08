@@ -508,9 +508,11 @@ inline void alignTemplatesFromCache(template_structs::TemplateFile& tmpl, templa
             dst.r_col = alignedRcol;
 
             if (forScoring) {
-                // Project into the scalar ch*_raw (so writeEcgSQICsv reads the
-                // anchor template) and write the co-framed aligned beats back
-                // (so QC scores beats in the same frame). Caller owns copies.
+                // Project into the scalar ch*_raw and write the co-framed
+                // aligned beats back. writeEcgSQICsv scores those beats against
+                // each bank slot's own median, rebuilt from this same matrix,
+                // and reads only r_col from the scalar -- the R column every
+                // row shares. Caller owns copies.
                 template_structs::ChannelMethodTemplate& scalar = bin.*(ch.ptr);
                 scalar.ecgTemplate = q.tmpl;          // copy: also stored below
                 scalar.ecg_template_std = q.iqr;
@@ -520,8 +522,9 @@ inline void alignTemplatesFromCache(template_structs::TemplateFile& tmpl, templa
                 // shifted |raw| beat (abs is pointwise), so the column-wise
                 // NaN-skipping median of |q.beats| equals what aligning the
                 // absval beats on this anchor would produce -- exact, no
-                // separate absval beat matrix needed. Write it into the absval
-                // scalar so writeEcgSQICsv's chiSqAbs is scored co-framed.
+                // separate absval beat matrix needed. Written into the absval
+                // scalar. (writeEcgSQICsv no longer reads it: its chiSqAbs
+                // reference is each slot's own |x| median over these rows.)
                 if (!q.beats.empty()) {
                     const size_t W = q.beats.front().size();
                     std::vector<double> absTmpl(W, std::numeric_limits<double>::quiet_NaN());

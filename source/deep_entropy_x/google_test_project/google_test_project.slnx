@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="../noise_marking_gui.vcxproj" Id="7588209c-c5fe-4483-8c82-fb43356ebccc" />
+  <Project Path="google_test_project.vcxproj" Id="812bbee7-9e10-4417-baaf-302496d15e6b" />
+</Solution>

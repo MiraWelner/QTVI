@@ -4,6 +4,6 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="../../QTVI_Tests/QTVI_Tests.vcxproj" Id="39acc498-b5f4-484f-a18c-4eb7f397ea13" />
+  <Project Path="google_test_project/google_test_project.vcxproj" Id="812bbee7-9e10-4417-baaf-302496d15e6b" />
   <Project Path="noise_marking_gui.vcxproj" Id="7588209c-c5fe-4483-8c82-fb43356ebccc" />
 </Solution>

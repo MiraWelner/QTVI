@@ -5,7 +5,7 @@
 #pragma once
 #include <array>
 #include <map>          // weighted_peaks; was only reaching here through other headers
-#include "stats_utils.hpp"
+#include "../stats_utils.hpp"
 #include "rpeakdetect.hpp"
 #include "pan_tompkin.hpp"
 #include "ecgLms.hpp"
