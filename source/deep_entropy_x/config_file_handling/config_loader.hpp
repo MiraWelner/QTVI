@@ -122,12 +122,12 @@ namespace config_loader_detail {
         cfg.r_peak_data_path = create_subfolder("r_peak_finding_output");
         cfg.template_path = create_subfolder("template_outputs");
         cfg.fiducial_marker_locations = create_subfolder("fiducial_marker_locations");
-        cfg.training_log = create_subfolder("logs");
+        cfg.logs = create_subfolder("logs");
         cfg.snapshot_path = create_subfolder("snapshot_path");
         cfg.vcg_output = create_subfolder("vcg_output");
-        if (cfg.dataset_type == "BITTIUM" && !cfg.cgm_folder.empty()) {
+        // Only when there is CGM to process, so other datasets get no empty folder.
+        if (cfg.dataset_type == "BITTIUM" && !cfg.cgm_folder.empty())
             cfg.cgm_output_path = create_subfolder("cgm_output");
-        }
     }
     inline bool prompt_for_missing_folders(config_entry& cfg) {
         // If the input or output folder is not in the config.csv (i.e. its field is empty), prompt the user to select it.
@@ -234,78 +234,92 @@ inline bool load_config(int dataType, config_entry& out) {
         out.main_file_extension = get_value_from_config("main_file_extension");
         out.sleep_file_extension = get_value_from_config("sleep_file_extension");
 
-        out.ecg_raw_rate = stod_or_default(get_value_from_config("ecg_raw_rate"), 0.0);
-        out.ecg_upsample_rate = stod_or_default(get_value_from_config("ecg_upsample_rate"), 0.0);
-        out.ppg_raw_rate = stod_or_default(get_value_from_config("ppg_raw_rate"), 0.0);
-        out.ppg_upsample_rate = stod_or_default(get_value_from_config("ppg_upsample_rate"), 0.0);
-        out.cvp_raw_rate = stod_or_default(get_value_from_config("cvp_raw_rate"), 0.0);
-        out.cvp_upsample_rate = stod_or_default(get_value_from_config("cvp_upsample_rate"), 0.0);
-        out.pres_raw_rate = stod_or_default(get_value_from_config("pres_raw_rate"), 0.0);
-        out.pres_upsample_rate = stod_or_default(get_value_from_config("pres_upsample_rate"), 0.0);
-        out.abp_raw_rate = stod_or_default(get_value_from_config("abp_raw_rate"), 0.0);
-        out.abp_upsample_rate = stod_or_default(get_value_from_config("abp_upsample_rate"), 0.0);
-        out.art_raw_rate = stod_or_default(get_value_from_config("art_raw_rate"), 0.0);
-        out.art_upsample_rate = stod_or_default(get_value_from_config("art_upsample_rate"), 0.0);
-        out.art_pulm_raw_rate = stod_or_default(get_value_from_config("art_pulm_raw_rate"), 0.0);
-        out.art_pulm_upsample_rate = stod_or_default(get_value_from_config("art_pulm_upsample_rate"), 0.0);
-        out.accel_raw_rate = stod_or_default(get_value_from_config("accel_raw_rate"), 0.0);
-        out.accel_upsample_rate = stod_or_default(get_value_from_config("accel_upsample_rate"), 0.0);
-        out.temp_raw_rate = stod_or_default(get_value_from_config("temp_raw_rate"), 0.0);
-        out.temp_upsample_rate = stod_or_default(get_value_from_config("temp_upsample_rate"), 0.0);
-        out.marker_raw_rate = stod_or_default(get_value_from_config("marker_raw_rate"), 0.0);
-        out.marker_upsample_rate = stod_or_default(get_value_from_config("marker_upsample_rate"), 0.0);
-        out.resp_raw_rate = stod_or_default(get_value_from_config("resp_raw_rate"), 0.0);
-        out.resp_upsample_rate = stod_or_default(get_value_from_config("resp_upsample_rate"), 0.0);
-        out.pacemaker_raw_rate = stod_or_default(get_value_from_config("pacemaker_event_raw_rate"), 0.0);
-        out.pacemaker_upsample_rate = stod_or_default(get_value_from_config("pacemaker_event_upsample_rate"), 0.0);
-        out.eeg_raw_rate = stod_or_default(get_value_from_config("eeg_raw_rate"), 0.0);
-        out.eeg_upsample_rate = stod_or_default(get_value_from_config("eeg_upsample_rate"), 0.0);
-        out.eog_l_raw_rate = stod_or_default(get_value_from_config("eogl_raw_rate"), 0.0);
-        out.eog_l_upsample_rate = stod_or_default(get_value_from_config("eogl_upsample_rate"), 0.0);
-        out.eog_r_raw_rate = stod_or_default(get_value_from_config("eogr_raw_rate"), 0.0);
-        out.eog_r_upsample_rate = stod_or_default(get_value_from_config("eogr_upsample_rate"), 0.0);
-        out.emg_raw_rate = stod_or_default(get_value_from_config("emg_raw_rate"), 0.0);
-        out.emg_upsample_rate = stod_or_default(get_value_from_config("emg_upsample_rate"), 0.0);
-        out.flow_raw_rate = stod_or_default(get_value_from_config("flow_raw_rate"), 0.0);
-        out.flow_upsample_rate = stod_or_default(get_value_from_config("flow_upsample_rate"), 0.0);
-        out.snore_raw_rate = stod_or_default(get_value_from_config("snore_raw_rate"), 0.0);
-        out.snore_upsample_rate = stod_or_default(get_value_from_config("snore_upsample_rate"), 0.0);
-        out.thor_raw_rate = stod_or_default(get_value_from_config("thor_raw_rate"), 0.0);
-        out.thor_upsample_rate = stod_or_default(get_value_from_config("thor_upsample_rate"), 0.0);
-        out.abdo_raw_rate = stod_or_default(get_value_from_config("abdo_raw_rate"), 0.0);
-        out.abdo_upsample_rate = stod_or_default(get_value_from_config("abdo_upsample_rate"), 0.0);
-        out.leg_raw_rate = stod_or_default(get_value_from_config("leg_raw_rate"), 0.0);
-        out.leg_upsample_rate = stod_or_default(get_value_from_config("leg_upsample_rate"), 0.0);
-        out.auxac_raw_rate = stod_or_default(get_value_from_config("auxac_raw_rate"), 0.0);
-        out.auxac_upsample_rate = stod_or_default(get_value_from_config("auxac_upsample_rate"), 0.0);
-        out.therm_raw_rate = stod_or_default(get_value_from_config("therm_raw_rate"), 0.0);
-        out.therm_upsample_rate = stod_or_default(get_value_from_config("therm_upsample_rate"), 0.0);
-        out.pos_raw_rate = stod_or_default(get_value_from_config("pos_raw_rate"), 0.0);
-        out.pos_upsample_rate = stod_or_default(get_value_from_config("pos_upsample_rate"), 0.0);
-        out.oxstatus_raw_rate = stod_or_default(get_value_from_config("oxstatus_raw_rate"), 0.0);
-        out.oxstatus_upsample_rate = stod_or_default(get_value_from_config("oxstatus_upsample_rate"), 0.0);
-        out.spo2_raw_rate = stod_or_default(get_value_from_config("spo2_raw_rate"), 0.0);
-        out.spo2_upsample_rate = stod_or_default(get_value_from_config("spo2_upsample_rate"), 0.0);
-        out.hr_raw_rate = stod_or_default(get_value_from_config("hr_raw_rate"), 0.0);
-        out.hr_upsample_rate = stod_or_default(get_value_from_config("hr_upsample_rate"), 0.0);
-        out.dhr_raw_rate = stod_or_default(get_value_from_config("dhr_raw_rate"), 0.0);
-        out.dhr_upsample_rate = stod_or_default(get_value_from_config("dhr_upsample_rate"), 0.0);
-        out.sleepstate_length = stod_or_default(get_value_from_config("sleepstate_length"), 0.0);
-        out.blanking_period = stod_or_default(get_value_from_config("blanking_period"), 0.0);
-        out.threshold = stod_or_default(get_value_from_config("threshold"), 0.0);
-        out.bin_size_minutes = stod_or_default(get_value_from_config("bin_size_minutes"), 0.0);
-        out.morph_threshold_ecg = stod_or_default(get_value_from_config("morph_threshold_ecg"), 0.0);
-        out.morph_threshold_ppg = stod_or_default(get_value_from_config("morph_threshold_ppg"), 0.0);
-        out.ppg_pearson_threshold = stod_or_default(get_value_from_config("pulse_qc_corr_floor"), 0.0);
-        out.ecg_tukey_fence = stod_or_default(get_value_from_config("ecg_tukey_fence"), 1.5);
-        out.ppg_tukey_fence = stod_or_default(get_value_from_config("ppg_tukey_fence"), 1.5);
-        out.min_beats_template_ecg = stod_or_default(get_value_from_config("min_beats_template_ecg"), 0);
-        out.min_beats_template_ppg = stod_or_default(get_value_from_config("min_beats_template_ppg"), 0);
-        out.region_around_Rpeak_for_morphology_split = stod_or_default(get_value_from_config("region_around_Rpeak_for_morphology_split"), 0.0);
-        out.region_around_PPGPeak_for_morphology_split = stod_or_default(get_value_from_config("region_around_PPGPeak_for_morphology_split"), 0.0);
+        // NUMERIC SETTINGS: config.csv key, config_entry field, value when blank.
+        // One row per setting, so a key and the field it fills sit side by side.
+        struct NumericKey { const char* key; double config_entry::* field; double whenBlank; };
+        static const NumericKey kNumeric[] = {
+            { "ecg_raw_rate",                               &config_entry::ecg_raw_rate, 0.0 },
+            { "ecg_upsample_rate",                          &config_entry::ecg_upsample_rate, 0.0 },
+            { "ppg_raw_rate",                               &config_entry::ppg_raw_rate, 0.0 },
+            { "ppg_upsample_rate",                          &config_entry::ppg_upsample_rate, 0.0 },
+            { "cvp_raw_rate",                               &config_entry::cvp_raw_rate, 0.0 },
+            { "cvp_upsample_rate",                          &config_entry::cvp_upsample_rate, 0.0 },
+            { "pres_raw_rate",                              &config_entry::pres_raw_rate, 0.0 },
+            { "pres_upsample_rate",                         &config_entry::pres_upsample_rate, 0.0 },
+            { "abp_raw_rate",                               &config_entry::abp_raw_rate, 0.0 },
+            { "abp_upsample_rate",                          &config_entry::abp_upsample_rate, 0.0 },
+            { "art_raw_rate",                               &config_entry::art_raw_rate, 0.0 },
+            { "art_upsample_rate",                          &config_entry::art_upsample_rate, 0.0 },
+            { "art_pulm_raw_rate",                          &config_entry::art_pulm_raw_rate, 0.0 },
+            { "art_pulm_upsample_rate",                     &config_entry::art_pulm_upsample_rate, 0.0 },
+            { "accel_raw_rate",                             &config_entry::accel_raw_rate, 0.0 },
+            { "accel_upsample_rate",                        &config_entry::accel_upsample_rate, 0.0 },
+            { "accel_epoch_sec",                            &config_entry::accel_epoch_sec, 30.0 },
+            { "accel_valid_epoch_pct",                      &config_entry::accel_valid_epoch_pct, 80.0 },
+            { "temp_raw_rate",                              &config_entry::temp_raw_rate, 0.0 },
+            { "temp_upsample_rate",                         &config_entry::temp_upsample_rate, 0.0 },
+            { "marker_raw_rate",                            &config_entry::marker_raw_rate, 0.0 },
+            { "marker_upsample_rate",                       &config_entry::marker_upsample_rate, 0.0 },
+            { "resp_raw_rate",                              &config_entry::resp_raw_rate, 0.0 },
+            { "resp_upsample_rate",                         &config_entry::resp_upsample_rate, 0.0 },
+            { "pacemaker_event_raw_rate",                   &config_entry::pacemaker_raw_rate, 0.0 },
+            { "pacemaker_event_upsample_rate",              &config_entry::pacemaker_upsample_rate, 0.0 },
+            { "eeg_raw_rate",                               &config_entry::eeg_raw_rate, 0.0 },
+            { "eeg_upsample_rate",                          &config_entry::eeg_upsample_rate, 0.0 },
+            { "eogl_raw_rate",                              &config_entry::eog_l_raw_rate, 0.0 },
+            { "eogl_upsample_rate",                         &config_entry::eog_l_upsample_rate, 0.0 },
+            { "eogr_raw_rate",                              &config_entry::eog_r_raw_rate, 0.0 },
+            { "eogr_upsample_rate",                         &config_entry::eog_r_upsample_rate, 0.0 },
+            { "emg_raw_rate",                               &config_entry::emg_raw_rate, 0.0 },
+            { "emg_upsample_rate",                          &config_entry::emg_upsample_rate, 0.0 },
+            { "flow_raw_rate",                              &config_entry::flow_raw_rate, 0.0 },
+            { "flow_upsample_rate",                         &config_entry::flow_upsample_rate, 0.0 },
+            { "snore_raw_rate",                             &config_entry::snore_raw_rate, 0.0 },
+            { "snore_upsample_rate",                        &config_entry::snore_upsample_rate, 0.0 },
+            { "thor_raw_rate",                              &config_entry::thor_raw_rate, 0.0 },
+            { "thor_upsample_rate",                         &config_entry::thor_upsample_rate, 0.0 },
+            { "abdo_raw_rate",                              &config_entry::abdo_raw_rate, 0.0 },
+            { "abdo_upsample_rate",                         &config_entry::abdo_upsample_rate, 0.0 },
+            { "leg_raw_rate",                               &config_entry::leg_raw_rate, 0.0 },
+            { "leg_upsample_rate",                          &config_entry::leg_upsample_rate, 0.0 },
+            { "auxac_raw_rate",                             &config_entry::auxac_raw_rate, 0.0 },
+            { "auxac_upsample_rate",                        &config_entry::auxac_upsample_rate, 0.0 },
+            { "therm_raw_rate",                             &config_entry::therm_raw_rate, 0.0 },
+            { "therm_upsample_rate",                        &config_entry::therm_upsample_rate, 0.0 },
+            { "pos_raw_rate",                               &config_entry::pos_raw_rate, 0.0 },
+            { "pos_upsample_rate",                          &config_entry::pos_upsample_rate, 0.0 },
+            { "oxstatus_raw_rate",                          &config_entry::oxstatus_raw_rate, 0.0 },
+            { "oxstatus_upsample_rate",                     &config_entry::oxstatus_upsample_rate, 0.0 },
+            { "spo2_raw_rate",                              &config_entry::spo2_raw_rate, 0.0 },
+            { "spo2_upsample_rate",                         &config_entry::spo2_upsample_rate, 0.0 },
+            { "hr_raw_rate",                                &config_entry::hr_raw_rate, 0.0 },
+            { "hr_upsample_rate",                           &config_entry::hr_upsample_rate, 0.0 },
+            { "dhr_raw_rate",                               &config_entry::dhr_raw_rate, 0.0 },
+            { "dhr_upsample_rate",                          &config_entry::dhr_upsample_rate, 0.0 },
+            { "sleepstate_length",                          &config_entry::sleepstate_length, 0.0 },
+            { "blanking_period",                            &config_entry::blanking_period, 0.0 },
+            { "threshold",                                  &config_entry::threshold, 0.0 },
+            { "bin_size_minutes",                           &config_entry::bin_size_minutes, 0.0 },
+            { "morph_threshold_ecg",                        &config_entry::morph_threshold_ecg, 0.0 },
+            { "morph_threshold_ppg",                        &config_entry::morph_threshold_ppg, 0.0 },
+            { "ppg_pearson_threshold",                        &config_entry::ppg_pearson_threshold, 0.0 },
+            { "ecg_tukey_fence",                            &config_entry::ecg_tukey_fence, 1.5 },
+            { "ppg_tukey_fence",                            &config_entry::ppg_tukey_fence, 1.5 },
+            { "region_around_Rpeak_for_morphology_split",   &config_entry::region_around_Rpeak_for_morphology_split, 0.0 },
+            { "region_around_PPGPeak_for_morphology_split", &config_entry::region_around_PPGPeak_for_morphology_split, 0.0 },
+        };
+        for (const NumericKey& n : kNumeric)
+            out.*n.field = stod_or_default(get_value_from_config(n.key), n.whenBlank);
+        out.min_beats_template_ecg = static_cast<int>(stod_or_default(get_value_from_config("min_beats_template_ecg"), 0));
+        out.min_beats_template_ppg = static_cast<int>(stod_or_default(get_value_from_config("min_beats_template_ppg"), 0));
+
         out.input_path = get_value_from_config("original_file_path");
         out.output_path = get_value_from_config("output_folder");
         out.cgm_folder = get_value_from_config("cgm_folder");
+        if (!out.cgm_folder.empty() && out.dataset_type != "BITTIUM")
+            std::cerr << "NOTE: cgm_folder is set for " << out.dataset_type
+            << "; CGM is processed for BITTIUM only, ignoring it\n";
+        out.cgm_bin_minutes = stod_or_default(get_value_from_config("cgm_bin_minutes"), 60.0);
         out.use_consensus_rpeak = parseBool(get_value_from_config("use_consensus_rpeak"), true);
         out.exclude_beat_after_ectopic = parseBool(get_value_from_config("exclude_beat_after_ectopic"), true);
         out.override_morphology = parseBool(get_value_from_config("override_morphology"), false);
@@ -313,11 +327,11 @@ inline bool load_config(int dataType, config_entry& out) {
         if (out.notch_filter_hz != 0.0 &&
             out.notch_filter_hz != 50.0 &&
             out.notch_filter_hz != 60.0) {
-            std::cerr << "WARNING: notch_filter_hz=" << out.notch_filter_hz  << " is not 0, 50 or 60; disabling notch filter\n";
+            std::cerr << "WARNING: notch_filter_hz=" << out.notch_filter_hz
+                << " is not 0, 50 or 60; disabling notch filter\n";
             out.notch_filter_hz = 0.0;
         }
         out.waveform_highpass_hz = stod_or_default(get_value_from_config("waveform_highpass_hz"), 0.0);
-        out.cgm_bin_minutes = stod_or_default(get_value_from_config("cgm_bin_minutes"), 60.0);
 
         // --- Subject demographics (stored only, ignored downstream for now) ---
         out.age = stod_or_default(get_value_from_config("age"), 0);

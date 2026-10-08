@@ -143,7 +143,7 @@ static void exportMarkings(const config_entry& cfg, const std::filesystem::path&
 static void runTemplateMarking(const config_entry& cfg, std::shared_ptr<analysis_job::AnalysisJob> job, const QString& fileId, std::vector<analysis_job::BankSnapshot>& outBanks, bool notchEnabled) {
     //Launch the template marking GUI
     TemplateViewerWindow viewer;
-    viewer.setBoundaryTrainingDir(QString::fromStdString(cfg.training_log));
+    viewer.setBoundaryTrainingDir(QString::fromStdString(cfg.logs));
     viewer.set_vcg_output_dir(QString::fromStdString(cfg.vcg_output));
     viewer.setNormOutputDir(QString::fromStdString(cfg.template_path));
     // BEFORE loadSubject. loadSubject stamps this onto every bin and the

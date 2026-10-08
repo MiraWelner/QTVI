@@ -253,7 +253,7 @@ namespace sqi_ppg {
         const auto it = beats.per_channel_beats.find("PPG");
         if (it == beats.per_channel_beats.end()) return;   // no PPG in this record
 
-        const std::string outPath = cfg.training_log + "/" + stem + "_ppg_quality.csv";
+        const std::string outPath = cfg.logs + "/" + stem + "_ppg_quality.csv";
         std::ofstream f(outPath);
         if (!f.is_open()) {
             std::cerr << "  WARNING: could not open " << outPath << " for PPG SQI output\n";

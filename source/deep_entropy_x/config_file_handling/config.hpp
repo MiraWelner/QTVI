@@ -58,6 +58,7 @@ struct config_entry {
     double art_raw_rate = 0.0, art_upsample_rate = 0.0;
     double art_pulm_raw_rate = 0.0, art_pulm_upsample_rate = 0.0;
     double accel_raw_rate = 0.0, accel_upsample_rate = 0.0;
+    double accel_epoch_sec = 30.0, accel_valid_epoch_pct = 80.0;
     double temp_raw_rate = 0.0, temp_upsample_rate = 0.0;
     double marker_raw_rate = 0.0, marker_upsample_rate = 0.0;
     double resp_raw_rate = 0.0, resp_upsample_rate = 0.0;
@@ -106,7 +107,7 @@ struct config_entry {
     std::string fiducial_marker_locations;
     std::string snapshot_path;
     std::string log_path;
-    std::string training_log;
+    std::string logs;
     std::string vcg_output;
     std::string cgm_output_path;
 

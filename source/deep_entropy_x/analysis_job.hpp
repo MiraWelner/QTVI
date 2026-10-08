@@ -275,7 +275,7 @@ namespace analysis_job {
         AnnealedData annealedData = read_input_binfile(annealedPath.string());
 
 
-        channel_offset::set(cfg.training_log, stem);
+        channel_offset::set(cfg.logs, stem);
         channel_offset::Result chOffPpg, chOffArt;
         const bool wantChannelOffset = (cfg.dataset_type == "CHAOS");
         if (wantChannelOffset) {
@@ -390,8 +390,8 @@ namespace analysis_job {
         }
 
         std::cerr << "  Processing Raw Templates (fast stage): " << stem << "\n";
-        ecg_move_log::set(cfg.training_log, stem);   // per-beat vertical + horizontal move log
-        ptt_log::set(cfg.training_log, stem);        // per-beat R->PPG transit times
+        ecg_move_log::set(cfg.logs, stem);   // per-beat vertical + horizontal move log
+        ptt_log::set(cfg.logs, stem);        // per-beat R->PPG transit times
         templates_io::set(cfg.template_path, stem);
         // AFTER set(), which clears it: the archive this build writes carries
         // this record's lags as a trailer.
@@ -530,8 +530,11 @@ namespace analysis_job {
             // from the original record; a failure leaves them empty and the
             // SQIs fall back (no motion penalty, clipping scored as 1).
             try {
+                accel_pipeline::AccelParams ap;
+                ap.epochSec = cfg.accel_epoch_sec;                         // config.csv
+                ap.minEpochCoverage = cfg.accel_valid_epoch_pct / 100.0;   // config.csv
                 job.accel = accel_pipeline::runAccelPipeline(
-                    accel_pipeline::readAccelFromBin(binPath.string()));
+                    accel_pipeline::readAccelFromBin(binPath.string()), ap);
                 std::cerr << "  [accel] " << (job.accel.epochs.empty()
                     ? std::string("no accelerometer in this record; no motion penalty in the SQIs")
                     : std::to_string(job.accel.epochs.size()) + " epochs") << "\n";
@@ -630,7 +633,7 @@ namespace analysis_job {
             write_output_binfile(job.rPeakPath.string(), job.peakResults);
 
             mergeTemplatesSlow(job.peakResults, job.tmpl, job.info, job.rates);
-            premark::runAll(job.beats, job.tmpl, job.rates.ecg, pol, job.cfg.training_log, job.stem);
+            premark::runAll(job.beats, job.tmpl, job.rates.ecg, pol, job.cfg.logs, job.stem);
             const accel_pipeline::AccelResult* accel = job.accel.epochs.empty() ? nullptr : &job.accel;
             writeEcgSQICsv(job.cfg, job.stem + "_R_PEAK", job.tmpl, job.beats, job.samplingRate, pol,
                 &job.beatTimes, accel);

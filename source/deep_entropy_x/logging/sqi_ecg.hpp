@@ -8,7 +8,7 @@
  *         Wiring: writeEcgSQICsv() is called from analysis_job::finalize()
  *         right after mergeTemplatesSlow() has produced the canonical
  *         job.tmpl / job.beats for a file. It writes one CSV per input file
- *         into cfg.quality_metric.
+ *         into cfg.training_log.
  *
  *         Segment boundaries (P/QRS/ST) are derived from FeatureMarks'
  *         existing auto-detectors -- the same ones that seed the viewer's
@@ -177,11 +177,15 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
     double fs) {
     BeatSQI q{};
     q.templateCorr = std::max(0.0, pearsonSQI(beat, tmpl));   // whole beat, 0..1
-    auto chi = [&](const std::vector<double>& ref, int a, int b) {
+    // Against tmplAbs (the median of |beat| over the bin) the beat is compared
+    // as |beat| too, so a beat identical to the template scores 0 on both.
+    // Comparing the signed beat with the all-positive tmplAbs (the spec's code
+    // as written) would score every negative deflection as a mismatch.
+    auto chi = [&](const std::vector<double>& ref, int a, int b, bool absBeat = false) {
         double s = 0.0;
         const int hi = std::min(b, static_cast<int>(std::min(beat.size(), ref.size())));
         for (int i = std::max(0, a); i < hi; ++i) {
-            const double bi = beat[i], ri = ref[i];
+            const double bi = absBeat ? std::abs(beat[i]) : beat[i], ri = ref[i];
             if (std::isnan(bi) || std::isnan(ri)) continue;
             const double d = bi - ri;
             s += d * d;
@@ -190,13 +194,13 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
         };
 
     q.chiSq0 = chi(tmpl, 0, static_cast<int>(beat.size()));
-    q.chiSqAbs = chi(tmplAbs, 0, static_cast<int>(beat.size()));
+    q.chiSqAbs = chi(tmplAbs, 0, static_cast<int>(beat.size()), true);
     q.chiSq0_P = chi(tmpl, seg.pLo, seg.pHi);
     q.chiSq0_QRS = chi(tmpl, seg.qrsLo, seg.qrsHi);
     q.chiSq0_ST = chi(tmpl, seg.stLo, seg.stHi);
-    q.chiSqAbs_P = chi(tmplAbs, seg.pLo, seg.pHi);
-    q.chiSqAbs_QRS = chi(tmplAbs, seg.qrsLo, seg.qrsHi);
-    q.chiSqAbs_ST = chi(tmplAbs, seg.stLo, seg.stHi);
+    q.chiSqAbs_P = chi(tmplAbs, seg.pLo, seg.pHi, true);
+    q.chiSqAbs_QRS = chi(tmplAbs, seg.qrsLo, seg.qrsHi, true);
+    q.chiSqAbs_ST = chi(tmplAbs, seg.stLo, seg.stHi, true);
 
     // Baseline: the sample at P onset against the sample at T end.
     const int lastIdx = static_cast<int>(beat.size()) - 1;
@@ -224,7 +228,7 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
 // ---------------------------------------------------------------------
 // File-level driver: scores every kept beat, on every ECG channel, in
 // every bin, against that bin/channel's own raw + absval templates, and
-// writes one row per beat to <cfg.quality_metric>/<stem>_quality.csv.
+// writes one row per beat to <cfg.training_log>/<stem>_quality.csv.
 //
 // Called from analysis_job::finalize() once job.tmpl/job.beats are final.
 // `pol` is built there from the job's per-channel inversion flags.
@@ -245,7 +249,7 @@ inline void writeEcgSQICsv(const config_entry& cfg,
     const LeadPolarity& pol,
     const beat_times::BeatTimes* times = nullptr,
     const accel_pipeline::AccelResult* accel = nullptr) {
-    const std::string outPath = cfg.training_log + "/" + stem + "_quality.csv";
+    const std::string outPath = cfg.logs + "/" + stem + "_quality.csv";
     std::ofstream f(outPath);
     if (!f.is_open()) {
         std::cerr << "  WARNING: could not open " << outPath << " for SQI output\n";
