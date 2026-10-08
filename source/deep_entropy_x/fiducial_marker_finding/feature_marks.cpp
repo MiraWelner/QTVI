@@ -1181,6 +1181,45 @@ void FeatureMarks::seed_all(time_bin& b, double sampleRate, double ppgRate,
         b.art_pulm_peak2_auto, b.art_pulm_end_auto);
 }
 
+int FeatureMarks::pick_r_sample(const std::vector<double>& t, int qa, int jb,
+    double sgn, bool* flipped)
+{
+    if (flipped) *flipped = false;
+    const int n = static_cast<int>(t.size());
+    qa = std::clamp(qa, 0, n - 1);
+    jb = std::clamp(jb, 0, n - 1);
+    if (n < 2 || jb <= qa || std::isnan(t[qa]) || std::isnan(t[jb])) return -1;
+    const double B = 0.5 * (t[qa] + t[jb]);
+    const double s = (sgn < 0.0) ? -1.0 : 1.0;
+
+    // Largest deflection of either sign (the fallback, and the scale).
+    int anyBest = -1; double anyD = -1.0;
+    for (int i = qa; i <= jb; ++i) {
+        if (std::isnan(t[i])) continue;
+        const double d = std::abs(t[i] - B);
+        if (d > anyD) { anyD = d; anyBest = i; }
+    }
+    if (anyBest < 0) return -1;
+
+    // Largest INTERIOR local peak in the lead's direction.
+    int dirBest = -1; double dirD = 0.0;
+    for (int i = qa + 1; i < jb; ++i) {
+        const double v = t[i];
+        if (std::isnan(v) || std::isnan(t[i - 1]) || std::isnan(t[i + 1])) continue;
+        const double d = s * (v - B);
+        if (d <= 0.0) continue;
+        if (s * v < s * t[i - 1] || s * v < s * t[i + 1]) continue;   // not a local peak
+        if (d > dirD) { dirD = d; dirBest = i; }
+    }
+
+    if (dirBest >= 0 && dirD >= kMinRFraction * anyD) {
+        if (flipped) *flipped = (s < 0.0);
+        return dirBest;
+    }
+    if (flipped) *flipped = (t[anyBest] < B);
+    return anyBest;
+}
+
 FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
     const std::vector<double>& tmplIn, int nominal_r_col, double sampleRate, double sgn,
     curve_fit::FitMode fitMode, curve_fit::PeakFitMode peakMode)
@@ -1229,24 +1268,19 @@ FeatureMarks::TemplateLandmarks FeatureMarks::detect_template_landmarks(
 
     // R AGAIN, NOW THAT ITS BRACKETS EXIST. The pass above refined the
     // alignment's nominal column, and on a negative complex the refiner walks
-    // uphill away from the true R. With q_onset and s_end in hand, R is the
-    // sample furthest from the mean of those two ends -- the same rule
-    // find_t_peak uses on s_end/t_end. LOCAL, so it is left alone by the sgn
-    // threading: it is deciding which way THIS complex deflects between its own
-    // brackets, not which way the lead was recorded.
+    // uphill away from the true R. With q_onset and s_end in hand, R is picked
+    // between them by pick_r_sample: the largest deflection IN THE LEAD'S
+    // DIRECTION (sgn), falling back to the largest of either sign only for a
+    // complex with no real upright wave (QS, inverted ventricular). It was
+    // the largest of either sign always, which took a deep S for R.
     if (q >= 0.0 && j > q) {
         const int qa = std::clamp((int)std::lround(q), 0, n - 1);
         const int jb = std::clamp((int)std::lround(j), 0, n - 1);
-        if (jb > qa && !std::isnan(tmpl[qa]) && !std::isnan(tmpl[jb])) {
-            const double B = 0.5 * (tmpl[qa] + tmpl[jb]);
-            int best = qa; double bd = -1.0;
-            for (int i = qa; i <= jb; ++i) {
-                if (std::isnan(tmpl[i])) continue;
-                const double d = std::abs(tmpl[i] - B);
-                if (d > bd) { bd = d; best = i; }
-            }
+        bool flip = false;
+        const int best = FeatureMarks::pick_r_sample(tmpl, qa, jb, sgn, &flip);
+        if (best >= 0) {
             std::vector<double> u = tmpl;
-            if (tmpl[best] < B) for (double& x : u) x = -x;
+            if (flip) for (double& x : u) x = -x;
             const double rr = upsample_for_fit::find_peak(
                 u, best, upsample_for_fit::peak_sigma::R,
                 upsample_for_fit::peak_halfwidth::R, peakMode);

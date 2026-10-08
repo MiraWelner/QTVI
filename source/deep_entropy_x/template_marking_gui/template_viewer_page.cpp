@@ -1451,8 +1451,13 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
     // with its own R column for the alignment on screen.
     const SlotView svDraw = slotView(b, channel, templateIdx, currentGridAnchor());
     const std::vector<double>& drawnEcg = svDraw.valid ? *svDraw.tmpl : tp.tmpl;
+    // BRACKETED BY ALL FOUR BARS, not only the ones this alignment shows: mk
+    // is -1 for a hidden bar, which put the T peak at the left edge of a
+    // forced-P panel. See peakBrackets.
+    const tbank::BankMarkerSet pk = peakBrackets(b, channel, templateIdx,
+        currentGridAnchor(), mk, pw->detectedLandmarks());
     const FeatureMarks::ReactiveEcg reBank = FeatureMarks::update_t_and_p_location(
-        drawnEcg, mk.p_begin, mk.q_onset, mk.s_end, mk.t_end, m_sampleRate);
+        drawnEcg, pk.p_begin, pk.q_onset, pk.s_end, pk.t_end, m_sampleRate);
     pw->setMarker(BinPlotWidget::EcgPBegin, mk.p_begin);
     pw->setMarker(BinPlotWidget::EcgPPeak, reBank.p_peak);
     pw->setMarker(BinPlotWidget::EcgQBegin, mk.q_onset);
@@ -1481,7 +1486,7 @@ void TemplateViewerWindow::applyTemplateToWidget(BinPlotWidget* pw,
     // CSV use, so the three are one column. No fallback to a detected R or to
     // r_col: with no Q-onset/S-end bar there is no R to place.
     pw->setMarker(BinPlotWidget::EcgRPeak,
-        rPeakInBars(drawnEcg, mk.q_onset, mk.s_end, m_peakFitMode));
+        rPeakInBars(drawnEcg, pk.q_onset, pk.s_end, b.polarity.sign(channel), m_peakFitMode));
     pw->setMarker(BinPlotWidget::EcgSEnd, mk.s_end);
     pw->setMarker(BinPlotWidget::EcgTEnd, mk.t_end);
     // The bars the detector only PLACED (not found, no edit): circles.

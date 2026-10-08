@@ -657,7 +657,12 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             const FeatureMarks::ReactiveEcg rxA = FeatureMarks::update_t_and_p_location(
                 ecgA, (int)std::lround(aa.p_begin), (int)std::lround(aa.q_onset),
                 (int)std::lround(aa.s_end), (int)std::lround(aa.t_end), m_sampleRate);
-            const FeatureMarks::ReactiveEcg rxU = FeatureMarks::update_t_and_p_location(ecgA, umk.p_begin, umk.q_onset, umk.s_end, umk.t_end, m_sampleRate);
+            // P/T peaks and R bracketed by ALL FOUR bars (peakBrackets): umk
+            // is -1 for any bar this alignment hides or the operator never
+            // moved, which put the T peak at the trace's left edge and left R
+            // and the Q/S peaks blank.
+            const tbank::BankMarkerSet pkU = peakBrackets(b, c, 0, anchor, umk, aa);
+            const FeatureMarks::ReactiveEcg rxU = FeatureMarks::update_t_and_p_location(ecgA, pkU.p_begin, pkU.q_onset, pkU.s_end, pkU.t_end, m_sampleRate);
 
             // Same placement the glyph and the focus panel draw: aa.r_peak is
             // a seed, placeEcgPeak turns it into a position. On a failed fit
@@ -671,7 +676,7 @@ std::string TemplateViewerWindow::buildAlignedTemplateCsv(AnchorType anchor) {
             // bracketed by a detected mark. (rxA, the detector-bracketed
             // version, is no longer used for any column.)
             (void)rxA;
-            const double rUser = rPeakInBars(ecgA, umk.q_onset, umk.s_end, m_peakFitMode);
+            const double rUser = rPeakInBars(ecgA, pkU.q_onset, pkU.s_end, b.polarity.sign(c), m_peakFitMode);
             const int rUserInt = (rUser >= 0.0) ? static_cast<int>(std::lround(rUser)) : -1;
             const double qPkUser = (rUserInt >= 0)
                 ? FeatureMarks::find_q_peak(ecgA, rUserInt, m_sampleRate, 1.0, m_peakFitMode) : -1.0;

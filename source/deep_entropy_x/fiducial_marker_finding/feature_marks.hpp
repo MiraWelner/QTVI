@@ -93,6 +93,27 @@ public:
     // on an upright lead is ordinary pathology, not lead reversal -- feeding
     // those the lead sign would make them walk past exactly the finding that
     // matters.
+    // THE R SAMPLE BETWEEN A QRS'S BRACKETS [qa, jb]: the coarse pick that the
+    // R fit is then seeded from. Returns -1 when the window is unusable, and
+    // sets *flipped when R is a NEGATIVE deflection (so the caller fits -t).
+    //
+    // R IS THE LARGEST DEFLECTION IN THE LEAD'S OWN DIRECTION (sgn, the
+    // operator's "Lead Reversed" answer), measured from the mean of the two
+    // bracket ends. It used to be the largest deflection of EITHER sign, which
+    // on an RS / rS complex whose S is deeper than R is tall picked the S
+    // trough and called it R -- and every S-peak search, run from R, then
+    // looked in the wrong place too.
+    //
+    // FALLBACK: when the complex has no real wave in the lead's direction (a
+    // QS complex, an inverted ventricular beat), the largest deflection of
+    // either sign, the old rule. "No real wave" means its best interior local
+    // peak is under kMinRFraction of the largest absolute deflection; window
+    // ENDS are never candidates, since a baseline step between Q onset and J
+    // puts one end above the mean without any wave being there.
+    static constexpr double kMinRFraction = 0.10;
+    static int pick_r_sample(const std::vector<double>& t, int qa, int jb, double sgn,
+        bool* flipped = nullptr);
+
     static double find_q_peak(const std::vector<double>& ecg, int r_idx, double fs, double sgn, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static double find_s_peak(const std::vector<double>& ecg, int r_idx, double fs, double sgn, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto);
     static double find_j_point(const std::vector<double>& ecg, double fs, int r_col, double sgn, upsample_for_fit::TransitionCandidates* candOut = nullptr, curve_fit::FitMode mode = curve_fit::FitMode::Auto);
@@ -222,7 +243,7 @@ public:
 
     //find all fiducial markers for PPG
 
-    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters = NAN, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto,double measuredNotchCol = -1.0);
+    static PpgFiducials detect_ppg_fiducials(const std::vector<double>& v, int W, double ppgRate, double heightMeters = NAN, curve_fit::PeakFitMode peakMode = curve_fit::PeakFitMode::Auto, double measuredNotchCol = -1.0);
     static double signal_location_at_height(const std::vector<double>& v, int a, int b, double target);
     static int trough_in(const std::vector<double>& v, int lo, int hi);
     static double steepest_slope_in(const std::vector<double>& v, int lo, int hi);

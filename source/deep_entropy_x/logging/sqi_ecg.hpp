@@ -266,24 +266,42 @@ inline BeatSQI computeEcgSQI(const std::vector<double>& beat,
 //     else unknown. The next row may belong to another template -- it is the
 //     next beat in time, which is what closes the TP segment.
 // ---------------------------------------------------------------------
-inline void writeEcgSQICsv(const config_entry& cfg,
-    const std::string& stem,
+// ---- WHAT A SCORING PASS PRODUCES ----------------------------------------
+//
+// The scores, kept apart from the CSV so the record summary (Task H) reads the
+// same numbers the CSV prints rather than re-deriving them.
+//
+// EcgSQITemplate is one scored template: where it is, its name, and the two
+// landmarks its segments were built from, for the summary's QT fallback when
+// a template carries no bars. EcgSQIBeat is one scored member row.
+struct EcgSQITemplate {
+    size_t bin = 0;
+    int lead = 0, slot = 0;
+    std::string name;
+    int rCol = -1;
+    int qOnset = -1, tEnd = -1;   // Segments::qrsLo / Segments::tHi on the template's median
+};
+struct EcgSQIBeat {
+    size_t bin = 0;
+    int lead = 0, slot = 0;
+    uint32_t row = 0;              // local row of per_channel_beats[CHc][bin]
+    bool inTemplateAverage = false;
+    size_t templateIdx = 0;        // into EcgSQIResult::templates
+    BeatSQI q;
+};
+struct EcgSQIResult {
+    std::vector<EcgSQITemplate> templates;
+    std::vector<EcgSQIBeat> beats;
+};
+
+inline EcgSQIResult scoreEcgSQI(
     const template_structs::TemplateFile& tmpl,
     const template_structs::BeatsFile& beats,
     double ecgFs,
     const LeadPolarity& pol,
     const beat_times::BeatTimes* times = nullptr,
     const accel_pipeline::AccelResult* accel = nullptr) {
-    const std::string outPath = cfg.logs + "/" + stem + "_quality.csv";
-    std::ofstream f(outPath);
-    if (!f.is_open()) {
-        std::cerr << "  WARNING: could not open " << outPath << " for SQI output\n";
-        return;
-    }
-
-    f << "bin,channel,template,slot,beat,in_template_average,"
-        "template_corr,chiSq0,chiSqAbs,chiSq0_P,chiSq0_QRS,chiSq0_ST,"
-        "chiSqAbs_P,chiSqAbs_QRS,chiSqAbs_ST,baseline,noise,motion,composite,is_included\n";
+    EcgSQIResult out;
 
     // `lead` IS IN THE TABLE, not derived from the loop. The loop below is a
     // range-for over this array, so there is no counter to index pol with --
@@ -299,7 +317,6 @@ inline void writeEcgSQICsv(const config_entry& cfg,
         { "CH2", 1, &template_structs::BinTemplates::ch2_raw },
         { "CH3", 2, &template_structs::BinTemplates::ch3_raw },
     };
-    static const char* const included_levels[] = { "INCLUDE", "SUBSTITUTE", "EXCLUDE" };
     constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
     for (size_t bin = 0; bin < tmpl.bins.size(); ++bin) {
@@ -339,7 +356,9 @@ inline void writeEcgSQICsv(const config_entry& cfg,
                 if (ref.empty() || rCol >= static_cast<int>(ref.size())) continue;
 
                 const Segments seg = buildSegments(ref, rCol, ecgFs, pol.sign(ch.lead));
-                const std::string name = tbank::templateName(bank, slot, letters);
+                const size_t tIdx = out.templates.size();
+                out.templates.push_back({ bin, ch.lead, slot,
+                    tbank::templateName(bank, slot, letters), rCol, seg.qrsLo, seg.tHi });
 
                 std::vector<uint32_t> rows = tp.members;
                 std::sort(rows.begin(), rows.end());
@@ -379,16 +398,52 @@ inline void writeEcgSQICsv(const config_entry& cfg,
                         motionFlag = accel->sqiMotionFlag(t - rCol / ecgFs,
                             t + (static_cast<double>(beat.size()) - rCol) / ecgFs);
 
-                    const BeatSQI q = computeEcgSQI(beat, ref, refAbs, s, motionFlag, ecgFs);
-                    f << bin << ',' << ch.key << ',' << name << ',' << slot << ',' << bi << ','
-                        << int(averaged[bi]) << ','
-                        << q.templateCorr << ',' << q.chiSq0 << ',' << q.chiSqAbs << ','
-                        << q.chiSq0_P << ',' << q.chiSq0_QRS << ',' << q.chiSq0_ST << ','
-                        << q.chiSqAbs_P << ',' << q.chiSqAbs_QRS << ',' << q.chiSqAbs_ST << ','
-                        << q.baseline << ',' << q.noise << ',' << q.motion << ','
-                        << q.composite << ',' << included_levels[q.handling] << '\n';
+                    EcgSQIBeat rec;
+                    rec.bin = bin; rec.lead = ch.lead; rec.slot = slot; rec.row = bi;
+                    rec.inTemplateAverage = averaged[bi] != 0;
+                    rec.templateIdx = tIdx;
+                    rec.q = computeEcgSQI(beat, ref, refAbs, s, motionFlag, ecgFs);
+                    out.beats.push_back(rec);
                 }
             }
         }
     }
+    return out;
+}
+
+inline void writeEcgSQICsv(const config_entry& cfg, const std::string& stem,
+    const EcgSQIResult& res) {
+    const std::string outPath = cfg.logs + "/" + stem + "_quality.csv";
+    std::ofstream f(outPath);
+    if (!f.is_open()) {
+        std::cerr << "  WARNING: could not open " << outPath << " for SQI output\n";
+        return;
+    }
+    f << "bin,channel,template,slot,beat,in_template_average,"
+        "template_corr,chiSq0,chiSqAbs,chiSq0_P,chiSq0_QRS,chiSq0_ST,"
+        "chiSqAbs_P,chiSqAbs_QRS,chiSqAbs_ST,baseline,noise,motion,composite,is_included\n";
+    static const char* const keys[] = { "CH1", "CH2", "CH3" };
+    static const char* const included_levels[] = { "INCLUDE", "SUBSTITUTE", "EXCLUDE" };
+    for (const EcgSQIBeat& b : res.beats) {
+        const BeatSQI& q = b.q;
+        f << b.bin << ',' << keys[b.lead] << ',' << res.templates[b.templateIdx].name << ','
+            << b.slot << ',' << b.row << ',' << int(b.inTemplateAverage) << ','
+            << q.templateCorr << ',' << q.chiSq0 << ',' << q.chiSqAbs << ','
+            << q.chiSq0_P << ',' << q.chiSq0_QRS << ',' << q.chiSq0_ST << ','
+            << q.chiSqAbs_P << ',' << q.chiSqAbs_QRS << ',' << q.chiSqAbs_ST << ','
+            << q.baseline << ',' << q.noise << ',' << q.motion << ','
+            << q.composite << ',' << included_levels[q.handling] << '\n';
+    }
+}
+
+// The original entry point: score, then write. finalize() calls this.
+inline void writeEcgSQICsv(const config_entry& cfg,
+    const std::string& stem,
+    const template_structs::TemplateFile& tmpl,
+    const template_structs::BeatsFile& beats,
+    double ecgFs,
+    const LeadPolarity& pol,
+    const beat_times::BeatTimes* times = nullptr,
+    const accel_pipeline::AccelResult* accel = nullptr) {
+    writeEcgSQICsv(cfg, stem, scoreEcgSQI(tmpl, beats, ecgFs, pol, times, accel));
 }

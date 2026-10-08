@@ -39,6 +39,8 @@
 
 #include "logging/sqi_ecg.hpp"
 #include "logging/sqi_ppg.hpp"
+#include "logging/record_summary.hpp"
+#include "logging/record_summary_plot.hpp"
 
 
 namespace analysis_job {
@@ -1084,6 +1086,51 @@ namespace analysis_job {
         }
     }
 
+    // ---- TASK H: THE PER-RECORD DIAGNOSTIC SUMMARY ------------------------
+    //
+    // From commit, after the operator's banks are folded into job.tmpl: QT is
+    // read off the operator's bars, and the templates are the ones the
+    // operator left. Task A's ECG SQI is re-scored against those final banks
+    // here so chi-sq and QT describe the same templates (the _quality.csv
+    // finalize wrote describes the generated banks). Writes, into cfg.logs:
+    //   <stem>_diagnostic_summary.svg     the single QA page
+    //   <stem>_diagnostic_summary.csv     every panel's arrays
+    //   <stem>_diagnostic_summary_qt.csv  the templates behind RR vs QT
+    // Never fatal: a failure here costs the summary, not the commit.
+    inline void writeDiagnosticSummary(const AnalysisJob& job)
+    {
+        try {
+            const LeadPolarity pol{ { job.ecg1_inverted, job.ecg2_inverted, job.ecg3_inverted } };
+            const accel_pipeline::AccelResult* accel = job.accel.epochs.empty() ? nullptr : &job.accel;
+            const EcgSQIResult sqi = scoreEcgSQI(job.tmpl, job.beats, job.samplingRate, pol,
+                &job.beatTimes, accel);
+
+            std::vector<std::array<std::vector<std::size_t>, 3>> sliceOfRow(job.info.size());
+            for (std::size_t i = 0; i < job.info.size(); ++i)
+                sliceOfRow[i] = job.info[i].ecg_slice_of_row;
+
+            record_summary::SummaryInputs in;
+            in.recordID = job.stem;
+            in.tmpl = &job.tmpl;
+            in.beats = &job.beats;
+            in.peakResults = &job.peakResults;
+            in.ecgSliceOfRow = &sliceOfRow;
+            in.sqi = &sqi;
+            in.times = &job.beatTimes;
+            in.sleep = &job.sleep;
+            in.ecgFs = job.samplingRate;
+            in.ecgRecRateHz = job.ecgRecRateHz;
+            in.lead = 0;
+
+            const record_summary::DiagnosticSummary ds = record_summary::buildSummary(in);
+            record_summary::writeSummaryCsv(job.cfg.logs, job.stem, ds);
+            record_summary_plot::writeSummarySvg(job.cfg.logs, job.stem, ds);
+        }
+        catch (const std::exception& e) {
+            std::cerr << "  [diagnostic summary] not written: " << e.what() << "\n";
+        }
+    }
+
     inline bool commit(AnalysisJob& job, const std::vector<BankSnapshot>& banks)
     {
         if (banks.size() < job.tmpl.bins.size()) {
@@ -1099,6 +1146,7 @@ namespace analysis_job {
             job.tmpl.bins[i].ppg_bank = banks[i].ppg_bank;
         }
         writePeakLocationsCsv(job);
+        writeDiagnosticSummary(job);
         // ---- WHERE THE VERDICT GOES NOW ------------------------------
         //
         // <stem>_templates.bin, rewritten in place. It was <stem>_bins.bin,

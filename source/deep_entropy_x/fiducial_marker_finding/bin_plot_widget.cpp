@@ -761,11 +761,20 @@ BinPlotWidget::Reactive BinPlotWidget::reactiveGlyphs() const {
         bars.q_onset = m_markers[EcgQBegin];
         bars.s_end = m_markers[EcgSEnd];
         bars.t_end = m_markers[EcgTEnd];
+        // EVERY GLYPH BRACKETED BY ALL FOUR BARS. m_markers is -1 for every
+        // bar a forced alignment hides (P shows P onset only; J and T show
+        // T end only). As brackets, those -1s put the T peak at the panel's
+        // left edge and made R -- found between Q onset and S end -- come back
+        // -1, so R, and the Q and S peaks searched from it, were not drawn at
+        // all. peakBrackets fills only the hidden ones, with their Automatic
+        // value; the drawn bars themselves are untouched.
+        if (m_bin && m_det.valid)
+            bars = peakBrackets(*m_bin, m_leadIndex, m_templateIndex, m_frame, bars, m_det.lm);
         const EcgFiducials fid = ecgFiducialsFrom(m_det,
             m_rates[static_cast<size_t>(Channel::Ecg)], m_peakFitMode, bars);
         r.ecgPPeak = fid.p_peak;
         r.ecgTPeak = fid.t_peak;
-        // R and the Q/S peaks found from it: between the USER bars, the same
+        // R and the Q/S peaks found from it: between the bars, the same
         // function the markings CSV uses (ecgFiducialsFrom -> rPeakInBars).
         r.ecgRPeak = fid.r_peak;
         r.ecgQPeak = fid.q_peak;
